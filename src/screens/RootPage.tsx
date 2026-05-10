@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { OnboardingFlow } from "@/components/onboarding-flow"
-import { HomeScreen } from "@/components/home-screen"
+import { HomeScreen } from "@/screens/HomeScreen"
 import { getOnboardingState, saveOnboardingState } from "@/lib/persistence"
 
 export function RootPage() {

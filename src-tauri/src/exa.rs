@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::env;
 
-use crate::utils::{format_error_chain, http_client};
+use crate::utils::{http_client, AppError};
 
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 
@@ -69,13 +69,32 @@ struct ExaSearchResult {
 ///
 /// Returns a user-readable error so the frontend can surface a settings prompt
 /// rather than a raw environment variable error.
-fn exa_api_key(api_key: Option<&str>) -> Result<String, String> {
+fn exa_api_key_from(
+    api_key: Option<&str>,
+    env_key: impl FnOnce() -> Option<String>,
+) -> Result<String, AppError> {
     match api_key.filter(|value| !value.trim().is_empty()) {
         Some(value) => Ok(value.to_string()),
-        None => env::var("EXA_API_KEY").map_err(|_| {
-            "Exa API key is not configured. Add it in Settings to ground podcasts with web research."
-                .to_string()
+        None => env_key().ok_or(AppError::Config {
+            message:
+                "Exa API key is not configured. Add it in Settings to ground podcasts with web research.",
         }),
+    }
+}
+
+fn exa_api_key(api_key: Option<&str>) -> Result<String, AppError> {
+    exa_api_key_from(api_key, || env::var("EXA_API_KEY").ok())
+}
+
+fn map_research_result(result: ExaSearchResult) -> EpisodeResearchResult {
+    EpisodeResearchResult {
+        // Fall back to the URL when the result has no title, which Exa
+        // occasionally returns for pages with missing <title> tags.
+        title: result.title.unwrap_or_else(|| result.url.clone()),
+        url: result.url,
+        published_date: result.published_date,
+        author: result.author,
+        highlights: result.highlights.unwrap_or_default(),
     }
 }
 
@@ -113,22 +132,28 @@ pub async fn search_episode_research(
         .json(&request)
         .send()
         .await
-        .map_err(|error| format!("Exa request failed: {error}{}", format_error_chain(&error)))?;
+        .map_err(|source| AppError::HttpRequest {
+            service: "Exa",
+            source,
+        })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Exa search failed with status {status}: {body}"));
+        return Err(AppError::ApiStatus {
+            service: "Exa",
+            status,
+            body,
+        }
+        .into());
     }
 
     let search_response = response
         .json::<ExaSearchResponse>()
         .await
-        .map_err(|error| {
-            format!(
-                "Exa response parse failed: {error}{}",
-                format_error_chain(&error)
-            )
+        .map_err(|source| AppError::HttpResponseParse {
+            service: "Exa",
+            source,
         })?;
 
     Ok(SearchEpisodeResearchOutput {
@@ -136,15 +161,7 @@ pub async fn search_episode_research(
         results: search_response
             .results
             .into_iter()
-            .map(|result| EpisodeResearchResult {
-                // Fall back to the URL when the result has no title, which Exa
-                // occasionally returns for pages with missing <title> tags.
-                title: result.title.unwrap_or_else(|| result.url.clone()),
-                url: result.url,
-                published_date: result.published_date,
-                author: result.author,
-                highlights: result.highlights.unwrap_or_default(),
-            })
+            .map(map_research_result)
             .collect(),
     })
 }
@@ -165,16 +182,20 @@ mod tests {
     fn exa_api_key_rejects_empty_string() {
         // When the frontend sends an empty key, we should fall through to the env
         // lookup rather than passing an empty string to the API.
-        std::env::remove_var("EXA_API_KEY");
-        let result = exa_api_key(Some(""));
+        let result = exa_api_key_from(Some(""), || None);
         assert!(result.is_err());
     }
 
     #[test]
     fn exa_api_key_rejects_whitespace_only() {
-        std::env::remove_var("EXA_API_KEY");
-        let result = exa_api_key(Some("   "));
+        let result = exa_api_key_from(Some("   "), || None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn exa_api_key_uses_environment_fallback() {
+        let result = exa_api_key_from(None, || Some("env-key-123".to_string()));
+        assert_eq!(result.unwrap(), "env-key-123");
     }
 
     // --- result mapping ---
@@ -188,14 +209,20 @@ mod tests {
             author: None,
             highlights: None,
         };
-        let mapped = EpisodeResearchResult {
-            title: raw.title.unwrap_or_else(|| raw.url.clone()),
-            url: raw.url,
-            published_date: raw.published_date,
-            author: raw.author,
-            highlights: raw.highlights.unwrap_or_default(),
-        };
+        let mapped = map_research_result(raw);
         assert_eq!(mapped.title, "https://example.com/article");
+    }
+
+    #[test]
+    fn episode_research_result_defaults_missing_highlights_to_empty() {
+        let raw = ExaSearchResult {
+            title: None,
+            url: "https://example.com/article".to_string(),
+            published_date: None,
+            author: None,
+            highlights: None,
+        };
+        let mapped = map_research_result(raw);
         assert!(mapped.highlights.is_empty());
     }
 
@@ -208,8 +235,8 @@ mod tests {
             author: None,
             highlights: Some(vec!["snippet".to_string()]),
         };
-        let title = raw.title.unwrap_or_else(|| raw.url.clone());
-        assert_eq!(title, "Real Title");
+        let mapped = map_research_result(raw);
+        assert_eq!(mapped.title, "Real Title");
     }
 
     // --- num_results clamping ---

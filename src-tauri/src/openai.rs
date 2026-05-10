@@ -20,7 +20,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::utils::{format_error_chain, http_client};
+use crate::utils::{http_client, AppError};
 
 const DEFAULT_SCRIPT_MODEL: &str = "gpt-5.5";
 const IMAGE_MODEL: &str = "gpt-image-1";
@@ -92,18 +92,18 @@ pub struct GenerateEpisodeGraphicOutput {
 ///
 /// Returns an error with a user-readable message if neither source provides a key,
 /// so the frontend can surface a clear settings prompt rather than a raw env error.
-fn openai_api_key(api_key: Option<&str>) -> Result<String, String> {
+fn openai_api_key(api_key: Option<&str>) -> Result<String, AppError> {
     match api_key.filter(|value| !value.trim().is_empty()) {
         Some(value) => Ok(value.to_string()),
-        None => env::var("OPENAI_API_KEY").map_err(|_| {
-            "OpenAI API key is not configured. Add it in Settings before generating podcasts."
-                .to_string()
+        None => env::var("OPENAI_API_KEY").map_err(|_| AppError::Config {
+            message:
+                "OpenAI API key is not configured. Add it in Settings before generating podcasts.",
         }),
     }
 }
 
 /// Constructs an `async-openai` client backed by the shared HTTP client.
-fn build_client(api_key: Option<&str>) -> Result<Client<OpenAIConfig>, String> {
+fn build_client(api_key: Option<&str>) -> Result<Client<OpenAIConfig>, AppError> {
     let config = OpenAIConfig::new().with_api_key(openai_api_key(api_key)?);
     Ok(Client::build(http_client()?, config))
 }
@@ -498,11 +498,14 @@ fn image_prompt(input: &GenerateEpisodeGraphicInput) -> String {
 }
 
 /// Constructs the `ReasoningArgs` for a request at the specified effort level.
-fn reasoning_settings(effort: ReasoningEffort) -> Result<Reasoning, String> {
+fn reasoning_settings(effort: ReasoningEffort) -> Result<Reasoning, AppError> {
     ReasoningArgs::default()
         .effort(effort)
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|source| AppError::OpenAi {
+            operation: "reasoning settings build",
+            source,
+        })
 }
 
 /// Sends a single text-generation request to the OpenAI Responses API.
@@ -516,7 +519,7 @@ async fn create_response_text(
     max_output_tokens: u32,
     reasoning_effort: ReasoningEffort,
     structured_output: bool,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let mut request_builder = CreateResponseArgs::default();
     request_builder
         .model(model)
@@ -528,30 +531,40 @@ async fn create_response_text(
         request_builder.text(script_response_format());
     }
 
-    let request = request_builder
-        .build()
-        .map_err(|error| error.to_string())?;
+    let request = request_builder.build().map_err(|source| AppError::OpenAi {
+        operation: "response request build",
+        source,
+    })?;
 
     let response = client
         .responses()
         .create(request)
         .await
-        .map_err(|error| format!("OpenAI request failed: {error}{}", format_error_chain(&error)))?;
+        .map_err(|source| AppError::OpenAi {
+            operation: "response request",
+            source,
+        })?;
 
-    response
-        .output_text()
-        .ok_or_else(|| "OpenAI response did not include any text output".to_string())
+    response.output_text().ok_or(AppError::MissingResponse(
+        "OpenAI response did not include any text output",
+    ))
 }
 
 /// Returns the OS-local app data directory for a named media subfolder,
 /// creating it if it does not yet exist.
-fn app_media_dir(app: &AppHandle, folder_name: &str) -> Result<PathBuf, String> {
+fn app_media_dir(app: &AppHandle, folder_name: &str) -> Result<PathBuf, AppError> {
     let dir = app
         .path()
         .app_local_data_dir()
-        .map_err(|error| error.to_string())?
+        .map_err(|source| AppError::Tauri {
+            action: "resolving app data directory",
+            source,
+        })?
         .join(folder_name);
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&dir).map_err(|source| AppError::File {
+        action: "creating media directory",
+        source,
+    })?;
     Ok(dir)
 }
 
@@ -570,7 +583,7 @@ fn unique_media_file_name(prefix: &str, extension: &str) -> String {
 ///
 /// Structured output mode should make the fence unnecessary, but the editor pass
 /// occasionally wraps its response in fences regardless of instructions.
-fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String> {
+fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, AppError> {
     let trimmed = text.trim();
     let json_text = if trimmed.starts_with("```") {
         trimmed
@@ -585,7 +598,7 @@ fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String
         (Some(start), Some(end)) if start <= end => &json_text[start..=end],
         _ => json_text,
     };
-    serde_json::from_str(json_text).map_err(|error| error.to_string())
+    serde_json::from_str(json_text).map_err(AppError::JsonParse)
 }
 
 /// Generates a full podcast script through a four-stage LLM pipeline:
@@ -683,18 +696,19 @@ pub async fn generate_podcast_voice(
         request_builder.instructions(instructions);
     }
 
-    let request = request_builder.build().map_err(|error| error.to_string())?;
+    let request = request_builder.build().map_err(|source| AppError::OpenAi {
+        operation: "speech request build",
+        source,
+    })?;
 
     let response = client
         .audio()
         .speech()
         .create(request)
         .await
-        .map_err(|error| {
-            format!(
-                "OpenAI speech request failed: {error}{}",
-                format_error_chain(&error)
-            )
+        .map_err(|source| AppError::OpenAi {
+            operation: "speech request",
+            source,
         })?;
 
     let extension = match response_format {
@@ -707,7 +721,10 @@ pub async fn generate_podcast_voice(
     };
     let audio_dir = app_media_dir(&app, "generated-audio")?;
     let audio_path = audio_dir.join(unique_media_file_name("podcastr-episode", extension));
-    fs::write(&audio_path, &response.bytes).map_err(|error| error.to_string())?;
+    fs::write(&audio_path, &response.bytes).map_err(|source| AppError::File {
+        action: "writing generated audio",
+        source,
+    })?;
 
     Ok(GeneratePodcastVoiceOutput {
         audio_path: audio_path.to_string_lossy().to_string(),
@@ -740,11 +757,9 @@ pub async fn generate_episode_graphic(
         .images()
         .generate_byot(request)
         .await
-        .map_err(|error| {
-            format!(
-                "OpenAI image request failed: {error}{}",
-                format_error_chain(&error)
-            )
+        .map_err(|source| AppError::OpenAi {
+            operation: "image request",
+            source,
         })?;
 
     let image_base64 = response
@@ -753,14 +768,19 @@ pub async fn generate_episode_graphic(
         .and_then(|items| items.first())
         .and_then(|item| item.get("b64_json"))
         .and_then(Value::as_str)
-        .ok_or_else(|| "OpenAI image response did not include base64 image data".to_string())?;
+        .ok_or(AppError::MissingResponse(
+            "OpenAI image response did not include base64 image data",
+        ))?;
 
     let image_dir = app_media_dir(&app, "generated-images")?;
     let image_path = image_dir.join(unique_media_file_name("podcastr-cover", "png"));
     let image_bytes = general_purpose::STANDARD
         .decode(image_base64)
-        .map_err(|error| error.to_string())?;
-    fs::write(&image_path, image_bytes).map_err(|error| error.to_string())?;
+        .map_err(AppError::Base64Decode)?;
+    fs::write(&image_path, image_bytes).map_err(|source| AppError::File {
+        action: "writing generated image",
+        source,
+    })?;
 
     Ok(GenerateEpisodeGraphicOutput {
         image_path: image_path.to_string_lossy().to_string(),
@@ -859,7 +879,10 @@ mod tests {
 
     // --- ideal_episode_duration_minutes ---
 
-    fn make_input(themes: Vec<String>, research_context: Option<String>) -> GeneratePodcastScriptInput {
+    fn make_input(
+        themes: Vec<String>,
+        research_context: Option<String>,
+    ) -> GeneratePodcastScriptInput {
         GeneratePodcastScriptInput {
             api_key: None,
             themes,
@@ -878,10 +901,7 @@ mod tests {
 
     #[test]
     fn ideal_duration_increases_with_more_themes() {
-        let input = make_input(
-            vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            None,
-        );
+        let input = make_input(vec!["a".into(), "b".into(), "c".into(), "d".into()], None);
         assert!(ideal_episode_duration_minutes(&input) > 15);
     }
 

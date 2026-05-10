@@ -20,6 +20,7 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+thiserror = "2"
 
 [features]
 default = []
@@ -28,9 +29,8 @@ default = []
 unsafe_code = "forbid"
 
 [lints.clippy]
-# Flag clones that the compiler could have elided.
-redundant_clone = "warn"
-# Flag intermediate .collect() calls that are immediately re-iterated.
-needless_collect = "warn"
-# Flag enum variants that are significantly larger than the others (consider Box).
-large_enum_variant = "warn"
+all = { level = "deny", priority = 10 }
+perf = { level = "deny", priority = 9 }
+redundant_clone = { level = "deny", priority = 8 }
+needless_collect = { level = "deny", priority = 8 }
+large_enum_variant = { level = "deny", priority = 8 }
