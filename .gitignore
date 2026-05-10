@@ -5,5 +5,10 @@
 node_modules
 dist/
 .vite/
+.tauri/
+.cargo/
+.rustup/
 .next/
+src-tauri/target/
+src-tauri/gen/
 .DS_Store

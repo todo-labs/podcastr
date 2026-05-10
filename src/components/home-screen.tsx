@@ -68,6 +68,7 @@ export function HomeScreen() {
   const [currentPodcast, setCurrentPodcast] = useState<Podcast | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [showFeedback, setShowFeedback] = useState(false)
+  const [feedbackPodcast, setFeedbackPodcast] = useState<Podcast>(MOCK_PODCASTS[0])
 
   const handlePlayPodcast = (podcast: Podcast) => {
     setCurrentPodcast(podcast)
@@ -87,7 +88,7 @@ export function HomeScreen() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <Sparkles className="w-5 h-5 text-primary-foreground" />
               </div>
-              <span className="font-semibold text-lg tracking-tight">PodcastAI</span>
+              <span className="font-semibold text-lg tracking-tight">Podcastr</span>
             </div>
 
             <div className="flex-1 max-w-xl">
@@ -120,7 +121,13 @@ export function HomeScreen() {
             <Sparkles className="w-4 h-4" />
             Generate New Podcast
           </Button>
-          <Button variant="outline" onClick={() => setShowFeedback(true)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setFeedbackPodcast(currentPodcast ?? MOCK_PODCASTS[0])
+              setShowFeedback(true)
+            }}
+          >
             Provide Feedback
           </Button>
         </div>
@@ -205,7 +212,13 @@ export function HomeScreen() {
       {currentPodcast && <AudioPlayer podcast={currentPodcast} />}
 
       {/* Feedback Dialog */}
-      <FeedbackDialog open={showFeedback} onOpenChange={setShowFeedback} />
+      <FeedbackDialog
+        open={showFeedback}
+        onOpenChange={setShowFeedback}
+        podcast={feedbackPodcast}
+        initialRating={null}
+        onFeedbackSubmitted={() => {}}
+      />
     </div>
   )
 }

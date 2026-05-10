@@ -54,7 +54,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-semibold text-lg">PodcastAI</span>
+            <span className="font-semibold text-lg">Podcastr</span>
           </div>
           <div className="flex items-center gap-2">
             <div className={cn("w-2 h-2 rounded-full transition-colors", step >= 1 ? "bg-primary" : "bg-muted")} />

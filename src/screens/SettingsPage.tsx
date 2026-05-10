@@ -232,7 +232,7 @@ export function SettingsPage() {
 
         <Card className="p-6">
           <div className="space-y-2 text-sm text-muted-foreground text-center">
-            <p>PodcastAI - Local-First AI Podcasting</p>
+            <p>Podcastr - Local-First AI Podcasting</p>
             <p>Version 1.0.0</p>
             <p className="text-xs">All data is stored locally on your device</p>
           </div>

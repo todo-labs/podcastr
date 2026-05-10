@@ -23,7 +23,7 @@ interface Podcast {
   title: string
   description: string
   duration: string
-  imageUrl: string
+  imageUrl?: string
 }
 
 interface AudioPlayerProps {
@@ -40,7 +40,7 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackType, setFeedbackType] = useState<"positive" | "negative" | null>(null)
   const [episodeFeedback, setEpisodeFeedback] = useState<"positive" | "negative" | null>(null)
-  const intervalRef = useRef<NodeJS.Timeout>()
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     const allFeedback = JSON.parse(localStorage.getItem("podcast_feedback") || "[]")

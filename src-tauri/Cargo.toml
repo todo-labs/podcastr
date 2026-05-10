@@ -1,0 +1,18 @@
+[package]
+name = "podcastr"
+version = "0.1.0"
+description = "Podcastr desktop app"
+authors = ["Codex"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+tauri = { version = "2" }
+
+[features]
+default = []
