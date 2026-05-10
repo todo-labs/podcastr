@@ -7,6 +7,7 @@ import { AudioPlayer } from "@/components/audio-player"
 import { FeedbackDialog } from "@/components/feedback-dialog"
 import {
   CheckCircle2,
+  Download,
   FileText,
   Image,
   Loader2,
@@ -18,6 +19,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  Trash2,
 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Link } from "@/lib/router"
@@ -210,8 +212,14 @@ function EpisodeRow({
                 View episode
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem>Download</DropdownMenuItem>
-            <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+            <DropdownMenuItem>
+              <Download className="w-3.5 h-3.5 mr-2" />
+              Download
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive">
+              <Trash2 className="w-3.5 h-3.5 mr-2" />
+              Delete
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
