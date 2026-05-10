@@ -33,9 +33,14 @@ interface Podcast {
 
 interface AudioPlayerProps {
   podcast: Podcast
+  onProgress?: (progress: {
+    currentTime: number
+    duration: number
+    isPlaying: boolean
+  }) => void
 }
 
-export function AudioPlayer({ podcast }: AudioPlayerProps) {
+export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(180) // Mock duration in seconds
@@ -144,6 +149,14 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
       audioRef.current.muted = isMuted
     }
   }, [volume, isMuted])
+
+  useEffect(() => {
+    onProgress?.({
+      currentTime,
+      duration,
+      isPlaying,
+    })
+  }, [currentTime, duration, isPlaying, onProgress])
 
   useEffect(() => {
     if (hasAudioSource) {

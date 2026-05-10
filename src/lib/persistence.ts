@@ -27,7 +27,15 @@ type FeedbackEntry = {
   timestamp: string
 }
 
-type GeneratedPodcast = {
+export type ResearchSource = {
+  title: string
+  url: string
+  publishedDate?: string
+  author?: string
+  highlights: string[]
+}
+
+export type GeneratedPodcast = {
   id: string
   title: string
   description: string
@@ -35,6 +43,13 @@ type GeneratedPodcast = {
   generatedAt: string
   audioPath: string
   imagePath: string
+  transcript?: string
+  hook?: string
+  intro?: string
+  conclusion?: string
+  researchContext?: string
+  researchSources?: ResearchSource[]
+  scriptModel?: string
 }
 
 type SqliteDatabase = {
@@ -109,9 +124,34 @@ async function loadDatabase() {
             duration TEXT NOT NULL,
             generated_at TEXT NOT NULL,
             audio_path TEXT NOT NULL,
-            image_path TEXT NOT NULL
+            image_path TEXT NOT NULL,
+            hook TEXT NOT NULL DEFAULT '',
+            intro TEXT NOT NULL DEFAULT '',
+            conclusion TEXT NOT NULL DEFAULT '',
+            transcript TEXT NOT NULL DEFAULT '',
+            research_context TEXT NOT NULL DEFAULT '',
+            research_sources TEXT NOT NULL DEFAULT '[]',
+            script_model TEXT NOT NULL DEFAULT ''
           )
         `)
+
+        for (const statement of [
+          "ALTER TABLE generated_podcasts ADD COLUMN hook TEXT NOT NULL DEFAULT ''",
+          "ALTER TABLE generated_podcasts ADD COLUMN intro TEXT NOT NULL DEFAULT ''",
+          "ALTER TABLE generated_podcasts ADD COLUMN conclusion TEXT NOT NULL DEFAULT ''",
+          "ALTER TABLE generated_podcasts ADD COLUMN transcript TEXT NOT NULL DEFAULT ''",
+          "ALTER TABLE generated_podcasts ADD COLUMN research_context TEXT NOT NULL DEFAULT ''",
+          "ALTER TABLE generated_podcasts ADD COLUMN research_sources TEXT NOT NULL DEFAULT '[]'",
+          "ALTER TABLE generated_podcasts ADD COLUMN script_model TEXT NOT NULL DEFAULT ''",
+        ]) {
+          try {
+            await db.execute(statement)
+          } catch (error) {
+            if (!String(error).toLowerCase().includes("duplicate column")) {
+              throw error
+            }
+          }
+        }
 
         return db
       })
@@ -259,10 +299,21 @@ export async function getGeneratedPodcasts(): Promise<GeneratedPodcast[]> {
   const db = await loadDatabase()
   if (!db) {
     const raw = localStorage.getItem(GENERATED_PODCASTS_KEY)
-    return raw ? (JSON.parse(raw) as GeneratedPodcast[]) : []
+    return raw
+      ? (JSON.parse(raw) as GeneratedPodcast[]).map((podcast) => ({
+          ...podcast,
+          hook: podcast.hook ?? "",
+          intro: podcast.intro ?? "",
+          conclusion: podcast.conclusion ?? "",
+          transcript: podcast.transcript ?? "",
+          researchContext: podcast.researchContext ?? "",
+          researchSources: podcast.researchSources ?? [],
+          scriptModel: podcast.scriptModel ?? "",
+        }))
+      : []
   }
 
-  return db.select<Array<GeneratedPodcast>>(
+  const rows = await db.select<Array<GeneratedPodcast & { researchSources?: string }>>(
     `SELECT
       id,
       title,
@@ -270,10 +321,87 @@ export async function getGeneratedPodcasts(): Promise<GeneratedPodcast[]> {
       duration,
       generated_at as generatedAt,
       audio_path as audioPath,
-      image_path as imagePath
+      image_path as imagePath,
+      hook,
+      intro,
+      conclusion,
+      transcript,
+      research_context as researchContext,
+      research_sources as researchSources,
+      script_model as scriptModel
      FROM generated_podcasts
      ORDER BY generated_at DESC`,
   )
+
+  return rows.map((podcast) => ({
+    ...podcast,
+    hook: podcast.hook ?? "",
+    intro: podcast.intro ?? "",
+    conclusion: podcast.conclusion ?? "",
+    transcript: podcast.transcript ?? "",
+    researchContext: podcast.researchContext ?? "",
+    researchSources: podcast.researchSources ? (JSON.parse(podcast.researchSources) as ResearchSource[]) : [],
+    scriptModel: podcast.scriptModel ?? "",
+  }))
+}
+
+export async function getGeneratedPodcastById(id: string): Promise<GeneratedPodcast | null> {
+  const db = await loadDatabase()
+  if (!db) {
+    const raw = localStorage.getItem(GENERATED_PODCASTS_KEY)
+    const podcasts = raw ? (JSON.parse(raw) as GeneratedPodcast[]) : []
+    const podcast = podcasts.find((item) => item.id === id)
+    return podcast
+      ? {
+          ...podcast,
+          hook: podcast.hook ?? "",
+          intro: podcast.intro ?? "",
+          conclusion: podcast.conclusion ?? "",
+          transcript: podcast.transcript ?? "",
+          researchContext: podcast.researchContext ?? "",
+          researchSources: podcast.researchSources ?? [],
+          scriptModel: podcast.scriptModel ?? "",
+        }
+      : null
+  }
+
+  const rows = await db.select<Array<GeneratedPodcast & { researchSources?: string }>>(
+    `SELECT
+      id,
+      title,
+      description,
+      duration,
+      generated_at as generatedAt,
+      audio_path as audioPath,
+      image_path as imagePath,
+      hook,
+      intro,
+      conclusion,
+      transcript,
+      research_context as researchContext,
+      research_sources as researchSources,
+      script_model as scriptModel
+     FROM generated_podcasts
+     WHERE id = ?
+     LIMIT 1`,
+    [id],
+  )
+
+  const podcast = rows[0]
+  if (!podcast) {
+    return null
+  }
+
+  return {
+    ...podcast,
+    hook: podcast.hook ?? "",
+    intro: podcast.intro ?? "",
+    conclusion: podcast.conclusion ?? "",
+    transcript: podcast.transcript ?? "",
+    researchContext: podcast.researchContext ?? "",
+    researchSources: podcast.researchSources ? (JSON.parse(podcast.researchSources) as ResearchSource[]) : [],
+    scriptModel: podcast.scriptModel ?? "",
+  }
 }
 
 export async function saveGeneratedPodcast(entry: GeneratedPodcast) {
@@ -281,21 +409,52 @@ export async function saveGeneratedPodcast(entry: GeneratedPodcast) {
   if (!db) {
     const existing = JSON.parse(localStorage.getItem(GENERATED_PODCASTS_KEY) || "[]") as GeneratedPodcast[]
     const filtered = existing.filter((podcast) => podcast.id !== entry.id)
-    filtered.unshift(entry)
+    filtered.unshift({
+      ...entry,
+      hook: entry.hook ?? "",
+      intro: entry.intro ?? "",
+      conclusion: entry.conclusion ?? "",
+      transcript: entry.transcript ?? "",
+      researchContext: entry.researchContext ?? "",
+      researchSources: entry.researchSources ?? [],
+      scriptModel: entry.scriptModel ?? "",
+    })
     localStorage.setItem(GENERATED_PODCASTS_KEY, JSON.stringify(filtered))
     return
   }
 
   await db.execute(
-    `INSERT INTO generated_podcasts (id, title, description, duration, generated_at, audio_path, image_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO generated_podcasts (id, title, description, duration, generated_at, audio_path, image_path, hook, intro, conclusion, transcript, research_context, research_sources, script_model)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        description = excluded.description,
        duration = excluded.duration,
        generated_at = excluded.generated_at,
        audio_path = excluded.audio_path,
-       image_path = excluded.image_path`,
-    [entry.id, entry.title, entry.description, entry.duration, entry.generatedAt, entry.audioPath, entry.imagePath],
+       image_path = excluded.image_path,
+       hook = excluded.hook,
+       intro = excluded.intro,
+       conclusion = excluded.conclusion,
+       transcript = excluded.transcript,
+       research_context = excluded.research_context,
+       research_sources = excluded.research_sources,
+       script_model = excluded.script_model`,
+    [
+      entry.id,
+      entry.title,
+      entry.description,
+      entry.duration,
+      entry.generatedAt,
+      entry.audioPath,
+      entry.imagePath,
+      entry.hook ?? "",
+      entry.intro ?? "",
+      entry.conclusion ?? "",
+      entry.transcript ?? "",
+      entry.researchContext ?? "",
+      JSON.stringify(entry.researchSources ?? []),
+      entry.scriptModel ?? "",
+    ],
   )
 }

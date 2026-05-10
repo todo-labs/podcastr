@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import {
   Empty,
   EmptyContent,
@@ -12,13 +13,35 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
 import { AudioPlayer } from "@/components/audio-player"
 import { FeedbackDialog } from "@/components/feedback-dialog"
-import { Sparkles, Search, Settings, Play, Clock, TrendingUp, BookmarkPlus, MoreVertical } from "lucide-react"
+import {
+  CheckCircle2,
+  Clock,
+  FileText,
+  Image,
+  Loader2,
+  Mic,
+  MoreVertical,
+  Play,
+  Save,
+  Search,
+  Settings,
+  Sparkles,
+  TrendingUp,
+  BookmarkPlus,
+} from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Link } from "@/lib/router"
 import { useToast } from "@/hooks/use-toast"
-import { getAppSettings, getGeneratedPodcasts, getOnboardingState, saveGeneratedPodcast } from "@/lib/persistence"
+import {
+  getAppSettings,
+  getGeneratedPodcasts,
+  getOnboardingState,
+  saveGeneratedPodcast,
+  type GeneratedPodcast,
+} from "@/lib/persistence"
 import {
   generateEpisodeGraphic,
   generatePodcastScript,
@@ -29,15 +52,17 @@ import {
 } from "@/lib/openai"
 import { formatResearchContext, searchEpisodeResearch } from "@/lib/exa"
 
-interface Podcast {
-  id: string
-  title: string
-  description: string
-  duration: string
-  generatedAt: string
-  audioPath?: string
-  imagePath?: string
-}
+type Podcast = GeneratedPodcast
+
+const GENERATION_STEPS = [
+  { key: "searching", label: "Searching web context", icon: Search, progress: 12 },
+  { key: "planning", label: "Planning episode", icon: FileText, progress: 32 },
+  { key: "writing", label: "Writing script", icon: Sparkles, progress: 58 },
+  { key: "assets", label: "Generating voice and artwork", icon: Image, progress: 84 },
+  { key: "saving", label: "Saving episode", icon: Save, progress: 96 },
+] as const
+
+type GenerationStage = (typeof GENERATION_STEPS)[number]["key"] | "idle"
 
 export function HomeScreen() {
   const [currentPodcast, setCurrentPodcast] = useState<Podcast | null>(null)
@@ -50,6 +75,7 @@ export function HomeScreen() {
   const [defaultVoice, setDefaultVoice] = useState("alloy")
   const [scriptModel, setScriptModel] = useState("gpt-5.5")
   const [isGenerating, setIsGenerating] = useState(false)
+  const [generationStage, setGenerationStage] = useState<GenerationStage>("idle")
   const { toast } = useToast()
 
   const describeError = (error: unknown) => {
@@ -115,21 +141,24 @@ export function HomeScreen() {
     }
 
     setIsGenerating(true)
+    setGenerationStage("searching")
 
     try {
       const themes = selectedThemes.length > 0 ? selectedThemes : ["technology", "science", "business"]
       const resolvedThemes = resolveThemeLabels(themes)
       const researchQuery = `recent news, developments, examples, and analysis about ${resolvedThemes.join(", ")}`
       const research = await searchEpisodeResearch(researchQuery)
+      setGenerationStage("planning")
       const researchContext = formatResearchContext(research)
+      setGenerationStage("writing")
       const script = await generatePodcastScript({
         themes: resolvedThemes,
         voiceType,
         scriptModel,
-        durationMinutes: 4,
         researchContext,
       })
 
+      setGenerationStage("assets")
       const [audio, graphic] = await Promise.all([
         generatePodcastVoice({
           text: script.script,
@@ -153,6 +182,7 @@ export function HomeScreen() {
         imagePath: graphic.imagePath,
       }
 
+      setGenerationStage("saving")
       await saveGeneratedPodcast({
         id: episode.id,
         title: episode.title,
@@ -161,6 +191,13 @@ export function HomeScreen() {
         generatedAt: new Date().toISOString(),
         audioPath: audio.audioPath,
         imagePath: graphic.imagePath,
+        hook: script.hook,
+        intro: script.intro,
+        conclusion: script.conclusion,
+        transcript: script.script,
+        researchContext,
+        researchSources: research.results,
+        scriptModel,
       })
 
       setPodcasts((current) => [episode, ...current])
@@ -177,9 +214,25 @@ export function HomeScreen() {
         variant: "destructive",
       })
     } finally {
+      setGenerationStage("idle")
       setIsGenerating(false)
     }
   }
+
+  const generationProgress = generationStage === "idle"
+    ? 0
+    : GENERATION_STEPS.find((step) => step.key === generationStage)?.progress ?? 0
+
+  const currentGenerationLabel = generationStage === "idle"
+    ? "Ready to generate"
+    : GENERATION_STEPS.find((step) => step.key === generationStage)?.label ?? "Generating"
+
+  const completedSteps = GENERATION_STEPS.filter(
+    (step) =>
+      generationStage !== "idle" &&
+      GENERATION_STEPS.findIndex((candidate) => candidate.key === step.key) <
+        GENERATION_STEPS.findIndex((candidate) => candidate.key === generationStage),
+  )
 
   const filteredPodcasts = podcasts.filter((podcast) =>
     podcast.title.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -222,11 +275,51 @@ export function HomeScreen() {
 
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8 space-y-8">
+        {isGenerating && (
+          <div className="rounded-xl border bg-card p-4 space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  <p className="font-medium">{currentGenerationLabel}</p>
+                </div>
+                <p className="text-sm text-muted-foreground">Building the episode before it is saved to your library.</p>
+              </div>
+              <Badge variant="secondary">{Math.max(1, generationProgress)}%</Badge>
+            </div>
+            <Progress value={generationProgress} />
+            <div className="flex flex-wrap gap-2">
+              {GENERATION_STEPS.map((step) => {
+                const isComplete = completedSteps.some((item) => item.key === step.key)
+                const isActive = generationStage === step.key
+                const Icon = step.icon
+
+                return (
+                  <Badge
+                    key={step.key}
+                    variant={isActive ? "default" : isComplete ? "secondary" : "outline"}
+                    className="gap-1.5"
+                  >
+                    {isComplete ? (
+                      <CheckCircle2 className="w-3 h-3" />
+                    ) : isActive ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Icon className="w-3 h-3" />
+                    )}
+                    {step.label}
+                  </Badge>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Quick Actions */}
         <div className="flex items-center gap-3">
           <Button className="gap-2" onClick={handleGeneratePodcast} disabled={isGenerating}>
             <Sparkles className="w-4 h-4" />
-            {isGenerating ? "Generating..." : "Generate New Podcast"}
+            {isGenerating ? currentGenerationLabel : "Generate New Podcast"}
           </Button>
           <Button
             variant="outline"
@@ -316,7 +409,6 @@ export function HomeScreen() {
                             <BookmarkPlus className="w-4 h-4 mr-2" />
                             Save for Later
                           </DropdownMenuItem>
-                          <DropdownMenuItem>Share</DropdownMenuItem>
                           <DropdownMenuItem>Download</DropdownMenuItem>
                           <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
                         </DropdownMenuContent>
@@ -336,6 +428,12 @@ export function HomeScreen() {
                     <Button className="w-full gap-2" variant="secondary" onClick={() => handlePlayPodcast(podcast)}>
                       <Play className="w-4 h-4" />
                       Play Episode
+                    </Button>
+                    <Button asChild variant="outline" className="w-full gap-2">
+                      <Link href={`/episode/${podcast.id}`}>
+                        <FileText className="w-4 h-4" />
+                        Open Episode
+                      </Link>
                     </Button>
                   </div>
                 </Card>

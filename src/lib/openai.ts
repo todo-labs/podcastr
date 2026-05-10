@@ -15,6 +15,8 @@ export type PodcastScriptOutput = {
   title: string
   summary: string
   hook: string
+  intro: string
+  conclusion: string
   script: string
   voiceInstructions: string
   estimatedDurationMinutes: number
