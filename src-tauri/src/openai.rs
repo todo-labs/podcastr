@@ -3,7 +3,7 @@ use async_openai::{
     types::{
         audio::{CreateSpeechRequestArgs, SpeechModel, SpeechResponseFormat, Voice},
         responses::{
-            CreateResponseArgs, ReasoningArgs, ReasoningEffort, Reasoning,
+            CreateResponseArgs, Reasoning, ReasoningArgs, ReasoningEffort,
             ResponseFormatJsonSchema, ResponseTextParam,
         },
     },
@@ -14,16 +14,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     env, fs,
-    error::Error as StdError,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+use crate::utils::{format_error_chain, http_client};
+
 const DEFAULT_SCRIPT_MODEL: &str = "gpt-5.5";
 const IMAGE_MODEL: &str = "gpt-image-1";
 
+/// Input parameters for the podcast script generation command.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratePodcastScriptInput {
@@ -35,6 +37,7 @@ pub struct GeneratePodcastScriptInput {
     pub research_context: Option<String>,
 }
 
+/// Structured output returned by the podcast script generation command.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratePodcastScriptOutput {
@@ -48,6 +51,7 @@ pub struct GeneratePodcastScriptOutput {
     pub estimated_duration_minutes: u32,
 }
 
+/// Input parameters for the text-to-speech voice generation command.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratePodcastVoiceInput {
@@ -58,6 +62,7 @@ pub struct GeneratePodcastVoiceInput {
     pub response_format: Option<String>,
 }
 
+/// File path and MIME type of the generated audio output.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratePodcastVoiceOutput {
@@ -65,6 +70,7 @@ pub struct GeneratePodcastVoiceOutput {
     pub mime_type: String,
 }
 
+/// Input parameters for the episode cover art generation command.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateEpisodeGraphicInput {
@@ -74,6 +80,7 @@ pub struct GenerateEpisodeGraphicInput {
     pub themes: Vec<String>,
 }
 
+/// File path and MIME type of the generated cover image.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateEpisodeGraphicOutput {
@@ -81,9 +88,13 @@ pub struct GenerateEpisodeGraphicOutput {
     pub mime_type: String,
 }
 
-fn openai_api_key(api_key: Option<String>) -> Result<String, String> {
+/// Resolves the OpenAI API key from the caller-supplied value or the environment.
+///
+/// Returns an error with a user-readable message if neither source provides a key,
+/// so the frontend can surface a clear settings prompt rather than a raw env error.
+fn openai_api_key(api_key: Option<&str>) -> Result<String, String> {
     match api_key.filter(|value| !value.trim().is_empty()) {
-        Some(value) => Ok(value),
+        Some(value) => Ok(value.to_string()),
         None => env::var("OPENAI_API_KEY").map_err(|_| {
             "OpenAI API key is not configured. Add it in Settings before generating podcasts."
                 .to_string()
@@ -91,26 +102,16 @@ fn openai_api_key(api_key: Option<String>) -> Result<String, String> {
     }
 }
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|error| error.to_string())
+/// Constructs an `async-openai` client backed by the shared HTTP client.
+fn build_client(api_key: Option<&str>) -> Result<Client<OpenAIConfig>, String> {
+    let config = OpenAIConfig::new().with_api_key(openai_api_key(api_key)?);
+    Ok(Client::build(http_client()?, config))
 }
 
-fn format_error_chain(error: &dyn StdError) -> String {
-    let mut details = String::new();
-    let mut current = error.source();
-
-    while let Some(source) = current {
-        details.push_str("\n- ");
-        details.push_str(&source.to_string());
-        current = source.source();
-    }
-
-    details
-}
-
+/// Returns a prose description of the desired on-mic voice register for the host.
+///
+/// These descriptions feed directly into the script-generation prompts as
+/// register guidance, shaping vocabulary, sentence rhythm, and emotional texture.
 fn voice_style_description(voice_type: Option<&str>) -> &'static str {
     match voice_type {
         Some("professional") => {
@@ -137,13 +138,21 @@ fn voice_style_description(voice_type: Option<&str>) -> &'static str {
     }
 }
 
+/// Derives a reasonable episode duration from the richness of the input.
+///
+/// The base is 15 minutes. Additional minutes are added for more themes and
+/// for denser research context (measured by non-empty line count), clamped to 24
+/// so the script generator never targets an unreasonably long episode.
 fn ideal_episode_duration_minutes(input: &GeneratePodcastScriptInput) -> u32 {
     let theme_bonus = input.themes.len().saturating_sub(1).min(3) as u32;
     let research_context = input.research_context.as_deref().unwrap_or_default();
     let research_depth = if research_context.trim().is_empty() {
         0
     } else {
-        let line_count = research_context.lines().filter(|line| !line.trim().is_empty()).count() as u32;
+        let line_count = research_context
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count() as u32;
         match line_count {
             0..=2 => 1,
             3..=5 => 2,
@@ -154,22 +163,27 @@ fn ideal_episode_duration_minutes(input: &GeneratePodcastScriptInput) -> u32 {
     (15 + theme_bonus + research_depth).clamp(15, 24)
 }
 
+/// Converts a target duration in minutes to an approximate spoken word count.
+///
+/// 140 words per minute is a conservative estimate for deliberate podcast pacing.
 fn target_word_count(minutes: u32) -> u32 {
     minutes.saturating_mul(140)
 }
 
+/// Normalises the caller-supplied model name, falling back to the default.
+///
+/// Any non-empty string is passed through unchanged so the caller can use
+/// future model identifiers without a code change. Only blank/absent values
+/// trigger the fallback.
 fn normalize_script_model(model: Option<&str>) -> String {
-    match model.filter(|value| !value.trim().is_empty()) {
-        Some("gpt-5.5") => "gpt-5.5".to_string(),
-        Some("gpt-5.4") => "gpt-5.4".to_string(),
-        Some("gpt-5") => "gpt-5".to_string(),
-        Some("gpt-5-mini") => "gpt-5-mini".to_string(),
-        Some("gpt-5-nano") => "gpt-5-nano".to_string(),
-        Some(other) => other.to_string(),
+    // Pass through any non-empty model name; the API will reject invalid ones.
+    match model.filter(|m| !m.trim().is_empty()) {
+        Some(m) => m.to_string(),
         None => DEFAULT_SCRIPT_MODEL.to_string(),
     }
 }
 
+/// Returns a comma-separated theme string, falling back to a sensible default.
 fn script_themes(input: &GeneratePodcastScriptInput) -> String {
     if input.themes.is_empty() {
         "technology, culture, and practical innovation".to_string()
@@ -178,6 +192,8 @@ fn script_themes(input: &GeneratePodcastScriptInput) -> String {
     }
 }
 
+/// Formats the research context block for insertion into a prompt, or returns
+/// an empty string when no usable research was provided.
 fn research_section(input: &GeneratePodcastScriptInput) -> String {
     input
         .research_context
@@ -191,7 +207,11 @@ fn research_section(input: &GeneratePodcastScriptInput) -> String {
         .unwrap_or_default()
 }
 
-fn build_brief_prompt(input: &GeneratePodcastScriptInput, target_duration: u32, word_count: u32) -> String {
+fn build_brief_prompt(
+    input: &GeneratePodcastScriptInput,
+    target_duration: u32,
+    word_count: u32,
+) -> String {
     let themes = script_themes(input);
     let voice_style = voice_style_description(input.voice_type.as_deref());
     let research_context = research_section(input);
@@ -239,7 +259,6 @@ fn build_brief_prompt(input: &GeneratePodcastScriptInput, target_duration: u32, 
 }
 
 fn build_outline_prompt(brief: &str, target_duration: u32) -> String {
-
     format!(
         "You have a research brief for a {target_duration}-minute single-host podcast episode. \
          Turn it into a spoken audio outline — not a content plan, but a map of how the episode actually moves.\n\n\
@@ -275,7 +294,13 @@ fn build_outline_prompt(brief: &str, target_duration: u32) -> String {
     )
 }
 
-fn build_draft_prompt(input: &GeneratePodcastScriptInput, brief: &str, outline: &str, target_duration: u32, word_count: u32) -> String {
+fn build_draft_prompt(
+    input: &GeneratePodcastScriptInput,
+    brief: &str,
+    outline: &str,
+    target_duration: u32,
+    word_count: u32,
+) -> String {
     let voice_style = voice_style_description(input.voice_type.as_deref());
 
     format!(
@@ -385,6 +410,7 @@ fn build_editor_prompt(draft_json: &str, target_duration: u32, word_count: u32) 
     )
 }
 
+/// Builds the JSON Schema structured output format used for script generation responses.
 fn script_response_format() -> ResponseTextParam {
     ResponseFormatJsonSchema {
         description: Some(
@@ -421,8 +447,12 @@ fn script_response_format() -> ResponseTextParam {
     .into()
 }
 
-fn normalize_voice(voice: Option<String>) -> Voice {
-    match voice.as_deref() {
+/// Maps a caller-supplied voice name string to the typed `Voice` enum.
+///
+/// Unrecognised or absent values fall back to `Alloy`, which is the most
+/// neutral and broadly compatible OpenAI TTS voice.
+fn normalize_voice(voice: Option<&str>) -> Voice {
+    match voice {
         Some("ash") => Voice::Ash,
         Some("ballad") => Voice::Ballad,
         Some("coral") => Voice::Coral,
@@ -439,6 +469,7 @@ fn normalize_voice(voice: Option<String>) -> Voice {
     }
 }
 
+/// Maps an audio format string to its canonical MIME type.
 fn mime_type_for_format(response_format: &str) -> &'static str {
     match response_format {
         "wav" => "audio/wav",
@@ -450,6 +481,7 @@ fn mime_type_for_format(response_format: &str) -> &'static str {
     }
 }
 
+/// Builds the image generation prompt for an episode cover.
 fn image_prompt(input: &GenerateEpisodeGraphicInput) -> String {
     let themes = if input.themes.is_empty() {
         "technology and culture".to_string()
@@ -465,11 +497,7 @@ fn image_prompt(input: &GenerateEpisodeGraphicInput) -> String {
     )
 }
 
-fn build_client(api_key: Option<String>) -> Result<Client<OpenAIConfig>, String> {
-    let config = OpenAIConfig::new().with_api_key(openai_api_key(api_key)?);
-    Ok(Client::build(http_client()?, config))
-}
-
+/// Constructs the `ReasoningArgs` for a request at the specified effort level.
 fn reasoning_settings(effort: ReasoningEffort) -> Result<Reasoning, String> {
     ReasoningArgs::default()
         .effort(effort)
@@ -477,6 +505,10 @@ fn reasoning_settings(effort: ReasoningEffort) -> Result<Reasoning, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Sends a single text-generation request to the OpenAI Responses API.
+///
+/// When `structured_output` is true the response is constrained to the
+/// `podcastr_podcast_script` JSON Schema so the model cannot emit free text.
 async fn create_response_text(
     client: &Client<OpenAIConfig>,
     model: &str,
@@ -511,6 +543,8 @@ async fn create_response_text(
         .ok_or_else(|| "OpenAI response did not include any text output".to_string())
 }
 
+/// Returns the OS-local app data directory for a named media subfolder,
+/// creating it if it does not yet exist.
 fn app_media_dir(app: &AppHandle, folder_name: &str) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -521,6 +555,8 @@ fn app_media_dir(app: &AppHandle, folder_name: &str) -> Result<PathBuf, String> 
     Ok(dir)
 }
 
+/// Generates a unique media file name combining a prefix, millisecond timestamp,
+/// and UUIDv4 to avoid collisions across concurrent generation runs.
 fn unique_media_file_name(prefix: &str, extension: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -529,6 +565,11 @@ fn unique_media_file_name(prefix: &str, extension: &str) -> String {
     format!("{prefix}-{millis}-{}.{}", Uuid::new_v4(), extension)
 }
 
+/// Extracts and deserialises the `GeneratePodcastScriptOutput` JSON object from
+/// a model response that may be wrapped in a markdown code fence.
+///
+/// Structured output mode should make the fence unnecessary, but the editor pass
+/// occasionally wraps its response in fences regardless of instructions.
 fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String> {
     let trimmed = text.trim();
     let json_text = if trimmed.starts_with("```") {
@@ -547,12 +588,18 @@ fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String
     serde_json::from_str(json_text).map_err(|error| error.to_string())
 }
 
+/// Generates a full podcast script through a four-stage LLM pipeline:
+/// brief → outline → draft → editor pass.
+///
+/// Each stage runs sequentially because each depends on the previous stage's
+/// output. The draft and editor passes use structured JSON output to guarantee
+/// a parseable response shape.
 #[tauri::command]
 pub async fn generate_podcast_script(
     input: GeneratePodcastScriptInput,
 ) -> Result<GeneratePodcastScriptOutput, String> {
-    let api_key = input.api_key.clone();
-    let client = build_client(api_key)?;
+    // Borrow the key here so input remains available for the prompt builders below.
+    let client = build_client(input.api_key.as_deref())?;
     let script_model = normalize_script_model(input.script_model.as_deref());
     let target_duration = input
         .duration_minutes
@@ -600,22 +647,29 @@ pub async fn generate_podcast_script(
     .await?;
 
     let mut output = extract_json_object(&edited_json)?;
+    // Clamp upward only: respect the model's duration estimate when it exceeds
+    // the target, but never let it report fewer minutes than we asked for.
     output.estimated_duration_minutes = output.estimated_duration_minutes.max(target_duration);
     Ok(output)
 }
 
+/// Converts a script text to an audio file via OpenAI TTS and writes it to
+/// the app-local `generated-audio/` directory.
+///
+/// Returns the absolute file path and MIME type so the frontend can load the
+/// file directly through Tauri's asset protocol.
 #[tauri::command]
 pub async fn generate_podcast_voice(
     app: AppHandle,
     input: GeneratePodcastVoiceInput,
 ) -> Result<GeneratePodcastVoiceOutput, String> {
-    let client = build_client(input.api_key)?;
+    let client = build_client(input.api_key.as_deref())?;
     let response_format = input.response_format.as_deref().unwrap_or("mp3");
     let mut request_builder = CreateSpeechRequestArgs::default();
     request_builder
         .model(SpeechModel::Gpt4oMiniTts)
         .input(input.text)
-        .voice(normalize_voice(input.voice))
+        .voice(normalize_voice(input.voice.as_deref()))
         .response_format(match response_format {
             "wav" => SpeechResponseFormat::Wav,
             "flac" => SpeechResponseFormat::Flac,
@@ -636,7 +690,12 @@ pub async fn generate_podcast_voice(
         .speech()
         .create(request)
         .await
-        .map_err(|error| format!("OpenAI speech request failed: {error}{}", format_error_chain(&error)))?;
+        .map_err(|error| {
+            format!(
+                "OpenAI speech request failed: {error}{}",
+                format_error_chain(&error)
+            )
+        })?;
 
     let extension = match response_format {
         "wav" => "wav",
@@ -656,13 +715,19 @@ pub async fn generate_podcast_voice(
     })
 }
 
+/// Generates a cover image for a podcast episode via `gpt-image-1`, decodes
+/// the base64 response, and writes the PNG to the app-local `generated-images/`
+/// directory.
+///
+/// Uses the `byot` (Bring Your Own Type) escape hatch on `async-openai` because
+/// `gpt-image-1` with `b64_json` output is not yet covered by the typed API surface.
 #[tauri::command]
 pub async fn generate_episode_graphic(
     app: AppHandle,
     input: GenerateEpisodeGraphicInput,
 ) -> Result<GenerateEpisodeGraphicOutput, String> {
-    let api_key = input.api_key.clone();
-    let client = build_client(api_key)?;
+    // Borrow the key before moving input into image_prompt below.
+    let client = build_client(input.api_key.as_deref())?;
     let request = serde_json::json!({
       "model": IMAGE_MODEL,
       "prompt": image_prompt(&input),
@@ -675,7 +740,12 @@ pub async fn generate_episode_graphic(
         .images()
         .generate_byot(request)
         .await
-        .map_err(|error| format!("OpenAI image request failed: {error}{}", format_error_chain(&error)))?;
+        .map_err(|error| {
+            format!(
+                "OpenAI image request failed: {error}{}",
+                format_error_chain(&error)
+            )
+        })?;
 
     let image_base64 = response
         .get("data")
@@ -696,4 +766,212 @@ pub async fn generate_episode_graphic(
         image_path: image_path.to_string_lossy().to_string(),
         mime_type: "image/png".to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- normalize_script_model ---
+
+    #[test]
+    fn normalize_script_model_returns_default_when_none() {
+        assert_eq!(normalize_script_model(None), DEFAULT_SCRIPT_MODEL);
+    }
+
+    #[test]
+    fn normalize_script_model_returns_default_when_empty() {
+        assert_eq!(normalize_script_model(Some("")), DEFAULT_SCRIPT_MODEL);
+    }
+
+    #[test]
+    fn normalize_script_model_returns_default_when_whitespace_only() {
+        assert_eq!(normalize_script_model(Some("   ")), DEFAULT_SCRIPT_MODEL);
+    }
+
+    #[test]
+    fn normalize_script_model_passes_through_known_model() {
+        assert_eq!(normalize_script_model(Some("gpt-5-mini")), "gpt-5-mini");
+    }
+
+    #[test]
+    fn normalize_script_model_passes_through_unknown_model() {
+        // Unknown models are forwarded so future identifiers don't require a code change.
+        assert_eq!(normalize_script_model(Some("gpt-future")), "gpt-future");
+    }
+
+    // --- normalize_voice ---
+
+    #[test]
+    fn normalize_voice_returns_alloy_when_none() {
+        assert!(matches!(normalize_voice(None), Voice::Alloy));
+    }
+
+    #[test]
+    fn normalize_voice_returns_alloy_for_unrecognised_input() {
+        assert!(matches!(normalize_voice(Some("unknown")), Voice::Alloy));
+    }
+
+    #[test]
+    fn normalize_voice_maps_onyx() {
+        assert!(matches!(normalize_voice(Some("onyx")), Voice::Onyx));
+    }
+
+    #[test]
+    fn normalize_voice_maps_nova() {
+        assert!(matches!(normalize_voice(Some("nova")), Voice::Nova));
+    }
+
+    // --- mime_type_for_format ---
+
+    #[test]
+    fn mime_type_for_format_defaults_to_mpeg_for_mp3() {
+        assert_eq!(mime_type_for_format("mp3"), "audio/mpeg");
+    }
+
+    #[test]
+    fn mime_type_for_format_defaults_to_mpeg_for_unknown() {
+        assert_eq!(mime_type_for_format("xyz"), "audio/mpeg");
+    }
+
+    #[test]
+    fn mime_type_for_format_returns_wav() {
+        assert_eq!(mime_type_for_format("wav"), "audio/wav");
+    }
+
+    #[test]
+    fn mime_type_for_format_returns_flac() {
+        assert_eq!(mime_type_for_format("flac"), "audio/flac");
+    }
+
+    // --- target_word_count ---
+
+    #[test]
+    fn target_word_count_scales_with_duration() {
+        assert_eq!(target_word_count(15), 2100);
+        assert_eq!(target_word_count(20), 2800);
+    }
+
+    #[test]
+    fn target_word_count_handles_zero_without_panic() {
+        assert_eq!(target_word_count(0), 0);
+    }
+
+    // --- ideal_episode_duration_minutes ---
+
+    fn make_input(themes: Vec<String>, research_context: Option<String>) -> GeneratePodcastScriptInput {
+        GeneratePodcastScriptInput {
+            api_key: None,
+            themes,
+            voice_type: None,
+            script_model: None,
+            duration_minutes: None,
+            research_context,
+        }
+    }
+
+    #[test]
+    fn ideal_duration_meets_minimum_with_no_input() {
+        let input = make_input(vec![], None);
+        assert_eq!(ideal_episode_duration_minutes(&input), 15);
+    }
+
+    #[test]
+    fn ideal_duration_increases_with_more_themes() {
+        let input = make_input(
+            vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            None,
+        );
+        assert!(ideal_episode_duration_minutes(&input) > 15);
+    }
+
+    #[test]
+    fn ideal_duration_never_exceeds_maximum() {
+        let input = make_input(
+            vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()],
+            Some("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8".into()),
+        );
+        assert!(ideal_episode_duration_minutes(&input) <= 24);
+    }
+
+    // --- script_themes ---
+
+    #[test]
+    fn script_themes_returns_fallback_when_empty() {
+        let input = make_input(vec![], None);
+        assert_eq!(
+            script_themes(&input),
+            "technology, culture, and practical innovation"
+        );
+    }
+
+    #[test]
+    fn script_themes_joins_provided_themes() {
+        let input = make_input(vec!["AI".into(), "ethics".into()], None);
+        assert_eq!(script_themes(&input), "AI, ethics");
+    }
+
+    // --- voice_style_description ---
+
+    #[test]
+    fn voice_style_description_professional_contains_authoritative() {
+        assert!(voice_style_description(Some("professional")).contains("authoritative"));
+    }
+
+    #[test]
+    fn voice_style_description_energetic_contains_curious() {
+        assert!(voice_style_description(Some("energetic")).contains("curiosity"));
+    }
+
+    #[test]
+    fn voice_style_description_calm_contains_unhurried() {
+        assert!(voice_style_description(Some("calm")).contains("unhurried"));
+    }
+
+    #[test]
+    fn voice_style_description_defaults_to_conversational() {
+        assert!(voice_style_description(None).contains("conversational"));
+        assert!(voice_style_description(Some("unknown")).contains("conversational"));
+    }
+
+    // --- extract_json_object ---
+
+    fn valid_script_json() -> &'static str {
+        r#"{
+            "title": "Test Episode",
+            "summary": "A test summary.",
+            "hook": "Hook text.",
+            "intro": "Intro text.",
+            "conclusion": "Conclusion text.",
+            "script": "Full script text.",
+            "voiceInstructions": "Speak slowly.",
+            "estimatedDurationMinutes": 15
+        }"#
+    }
+
+    #[test]
+    fn extract_json_object_parses_plain_json() {
+        let result = extract_json_object(valid_script_json());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().title, "Test Episode");
+    }
+
+    #[test]
+    fn extract_json_object_strips_json_code_fence() {
+        let fenced = format!("```json\n{}\n```", valid_script_json());
+        let result = extract_json_object(&fenced);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extract_json_object_strips_plain_code_fence() {
+        let fenced = format!("```\n{}\n```", valid_script_json());
+        let result = extract_json_object(&fenced);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extract_json_object_returns_error_for_invalid_json() {
+        assert!(extract_json_object("not json at all").is_err());
+    }
 }
