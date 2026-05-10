@@ -23,6 +23,11 @@
       "capabilities": ["main-capability"]
     }
   },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:podcastr.db"]
+    }
+  },
   "bundle": {
     "active": true
   }

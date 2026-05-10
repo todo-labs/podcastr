@@ -11,4 +11,5 @@ dist/
 .next/
 src-tauri/target/
 src-tauri/gen/
+tsconfig.tsbuildinfo
 .DS_Store

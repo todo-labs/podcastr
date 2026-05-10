@@ -1,20 +1,28 @@
 import { useState, useEffect } from "react"
 import { OnboardingFlow } from "@/components/onboarding-flow"
 import { HomeScreen } from "@/components/home-screen"
+import { getOnboardingState, saveOnboardingState } from "@/lib/persistence"
 
 export function RootPage() {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
 
   useEffect(() => {
-    const completed = localStorage.getItem("onboarding_completed")
-    if (completed === "true") {
-      setHasCompletedOnboarding(true)
+    let cancelled = false
+
+    ;(async () => {
+      const state = await getOnboardingState()
+      if (!cancelled) {
+        setHasCompletedOnboarding(state.completed)
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
   }, [])
 
-  const handleOnboardingComplete = (selectedTopics: string[]) => {
-    localStorage.setItem("onboarding_completed", "true")
-    localStorage.setItem("selected_topics", JSON.stringify(selectedTopics))
+  const handleOnboardingComplete = async (selectedTopics: string[]) => {
+    await saveOnboardingState({ completed: true, selectedTopics })
     setHasCompletedOnboarding(true)
   }
 

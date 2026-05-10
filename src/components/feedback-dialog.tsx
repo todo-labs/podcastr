@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { ThumbsUp, ThumbsDown, Meh } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { getPodcastFeedback, savePodcastFeedback } from "@/lib/persistence"
 
 interface FeedbackDialogProps {
   open: boolean
@@ -45,17 +46,26 @@ export function FeedbackDialog({
   }, [open, initialRating])
 
   useEffect(() => {
+    let cancelled = false
+
     if (open && podcast?.id) {
-      const allFeedback = JSON.parse(localStorage.getItem("podcast_feedback") || "[]")
-      const thisPodcastFeedback = allFeedback.find((f: any) => f.podcastId === podcast.id)
-      if (thisPodcastFeedback) {
+      ;(async () => {
+        const thisPodcastFeedback = await getPodcastFeedback(podcast.id)
+        if (cancelled || !thisPodcastFeedback) {
+          return
+        }
+
         setRating(thisPodcastFeedback.rating)
         setFeedback(thisPodcastFeedback.feedback || "")
-      }
+      })()
+    }
+
+    return () => {
+      cancelled = true
     }
   }, [open, podcast?.id])
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!rating) {
       toast({
         title: "Rating required",
@@ -67,17 +77,13 @@ export function FeedbackDialog({
 
     if (!podcast?.id) return
 
-    const existingFeedback = JSON.parse(localStorage.getItem("podcast_feedback") || "[]")
-    const filteredFeedback = existingFeedback.filter((f: any) => f.podcastId !== podcast.id)
-
-    filteredFeedback.push({
+    await savePodcastFeedback({
       podcastId: podcast.id,
       podcastTitle: podcast.title,
-      rating,
+      rating: rating as "positive" | "negative" | "neutral",
       feedback,
       timestamp: new Date().toISOString(),
     })
-    localStorage.setItem("podcast_feedback", JSON.stringify(filteredFeedback))
 
     onFeedbackSubmitted(rating === "positive" ? "positive" : rating === "negative" ? "negative" : null)
 

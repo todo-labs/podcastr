@@ -11,6 +11,12 @@ import { Separator } from "@/components/ui/separator"
 import { Sparkles, ChevronLeft, Trash2 } from "lucide-react"
 import { Link, useNavigate } from "@/lib/router"
 import { useToast } from "@/hooks/use-toast"
+import {
+  clearAllAppData,
+  getAppSettings,
+  resetOnboardingState,
+  saveAppSettings,
+} from "@/lib/persistence"
 
 export function SettingsPage() {
   const navigate = useNavigate()
@@ -26,21 +32,28 @@ export function SettingsPage() {
   })
 
   useEffect(() => {
-    const savedSettings = localStorage.getItem("app_settings")
-    if (savedSettings) {
-      setSettings(JSON.parse(savedSettings))
+    let cancelled = false
+
+    ;(async () => {
+      const savedSettings = await getAppSettings()
+      if (!cancelled) {
+        setSettings(savedSettings)
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
   }, [])
 
   const updateSetting = (key: string, value: any) => {
     const newSettings = { ...settings, [key]: value }
     setSettings(newSettings)
-    localStorage.setItem("app_settings", JSON.stringify(newSettings))
+    void saveAppSettings(newSettings)
   }
 
-  const handleResetOnboarding = () => {
-    localStorage.removeItem("onboarding_completed")
-    localStorage.removeItem("selected_topics")
+  const handleResetOnboarding = async () => {
+    await resetOnboardingState()
     toast({
       title: "Onboarding reset",
       description: "You will be redirected to the onboarding flow",
@@ -50,9 +63,9 @@ export function SettingsPage() {
     }, 1000)
   }
 
-  const handleClearAllData = () => {
+  const handleClearAllData = async () => {
     if (confirm("Are you sure you want to clear all data? This action cannot be undone.")) {
-      localStorage.clear()
+      await clearAllAppData()
       toast({
         title: "All data cleared",
         description: "Redirecting to onboarding...",

@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react"
 import { FeedbackDialog } from "./feedback-dialog"
+import { getPodcastFeedback } from "@/lib/persistence"
 
 interface Podcast {
   id: string
@@ -43,16 +44,23 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    const allFeedback = JSON.parse(localStorage.getItem("podcast_feedback") || "[]")
-    const thisPodcastFeedback = allFeedback.find((f: any) => f.podcastId === podcast.id)
-    if (thisPodcastFeedback) {
-      setEpisodeFeedback(
-        thisPodcastFeedback.rating === "positive"
-          ? "positive"
-          : thisPodcastFeedback.rating === "negative"
-            ? "negative"
-            : null,
-      )
+    let cancelled = false
+
+    ;(async () => {
+      const thisPodcastFeedback = await getPodcastFeedback(podcast.id)
+      if (!cancelled) {
+        setEpisodeFeedback(
+          thisPodcastFeedback?.rating === "positive"
+            ? "positive"
+            : thisPodcastFeedback?.rating === "negative"
+              ? "negative"
+              : null,
+        )
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
   }, [podcast.id])
 
