@@ -11,13 +11,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     env, fs,
+    error::Error as StdError,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-const SCRIPT_MODEL: &str = "gpt-5-nano";
+const DEFAULT_SCRIPT_MODEL: &str = "gpt-5.5";
 const IMAGE_MODEL: &str = "gpt-image-1";
 
 #[derive(Debug, Deserialize)]
@@ -26,6 +27,7 @@ pub struct GeneratePodcastScriptInput {
     pub api_key: Option<String>,
     pub themes: Vec<String>,
     pub voice_type: Option<String>,
+    pub script_model: Option<String>,
     pub duration_minutes: Option<u32>,
     pub research_context: Option<String>,
 }
@@ -84,6 +86,26 @@ fn openai_api_key(api_key: Option<String>) -> Result<String, String> {
     }
 }
 
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|error| error.to_string())
+}
+
+fn format_error_chain(error: &dyn StdError) -> String {
+    let mut details = String::new();
+    let mut current = error.source();
+
+    while let Some(source) = current {
+        details.push_str("\n- ");
+        details.push_str(&source.to_string());
+        current = source.source();
+    }
+
+    details
+}
+
 fn voice_style_description(voice_type: Option<&str>) -> &'static str {
     match voice_type {
         Some("professional") => "clear, authoritative, and polished",
@@ -93,16 +115,28 @@ fn voice_style_description(voice_type: Option<&str>) -> &'static str {
     }
 }
 
-fn build_script_prompt(input: &GeneratePodcastScriptInput) -> String {
-    let themes = if input.themes.is_empty() {
+fn normalize_script_model(model: Option<&str>) -> String {
+    match model.filter(|value| !value.trim().is_empty()) {
+        Some("gpt-5.5") => "gpt-5.5".to_string(),
+        Some("gpt-5.4") => "gpt-5.4".to_string(),
+        Some("gpt-5") => "gpt-5".to_string(),
+        Some("gpt-5-mini") => "gpt-5-mini".to_string(),
+        Some("gpt-5-nano") => "gpt-5-nano".to_string(),
+        Some(other) => other.to_string(),
+        None => DEFAULT_SCRIPT_MODEL.to_string(),
+    }
+}
+
+fn script_themes(input: &GeneratePodcastScriptInput) -> String {
+    if input.themes.is_empty() {
         "technology, culture, and practical innovation".to_string()
     } else {
         input.themes.join(", ")
-    };
+    }
+}
 
-    let duration = input.duration_minutes.unwrap_or(4);
-    let voice_style = voice_style_description(input.voice_type.as_deref());
-    let research_context = input
+fn research_section(input: &GeneratePodcastScriptInput) -> String {
+    input
         .research_context
         .as_deref()
         .filter(|value| !value.trim().is_empty())
@@ -111,14 +145,44 @@ fn build_script_prompt(input: &GeneratePodcastScriptInput) -> String {
                 "\n\nUse this recent web research as grounding material. Prefer concrete, dated details. Do not invent facts beyond these notes. If a detail is uncertain, omit it.\n\n{value}"
             )
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn build_brief_prompt(input: &GeneratePodcastScriptInput) -> String {
+    let themes = script_themes(input);
+    let duration = input.duration_minutes.unwrap_or(4);
+    let voice_style = voice_style_description(input.voice_type.as_deref());
+    let research_context = research_section(input);
 
     format!(
-        "Create a podcast episode package for listeners interested in {themes}. The episode should feel {voice_style} and run about {duration} minutes when spoken aloud.{research_context}\n\nReturn a JSON object with exactly these keys:\n- title: a concise episode title\n- summary: one sentence episode summary\n- hook: a short opening hook\n- script: the full spoken script\n- voice_instructions: short instructions for the narrator voice\n- estimated_duration_minutes: an integer estimate\n\nKeep the script concise and under 3200 characters so it fits the speech synthesis request in one pass. Write a strong, production-ready script that sounds like a real podcast host speaking to an audience. Avoid generic AI cadence, thesis-essay structure, and phrases like \"in today's episode\" unless they sound natural in context.",
+        "You are a senior podcast producer. Build a compact episode brief for a {duration}-minute single-host episode.\n\nAudience interests: {themes}\nDesired voice: {voice_style}.{research_context}\n\nWrite a brief with these sections:\n- angle: the specific point of view, tension, or question the episode is built around\n- audience promise: what the listener will understand by the end\n- must-use details: concrete facts, dated details, named examples, and source URLs worth using\n- avoid: generic claims, stale facts, essay phrasing, and anything unsupported by the research notes\n- sound: how the host should feel on mic\n\nKeep it under 600 words. Do not write the script yet.",
         themes = themes,
         voice_style = voice_style,
         duration = duration,
         research_context = research_context
+    )
+}
+
+fn build_outline_prompt(input: &GeneratePodcastScriptInput, brief: &str) -> String {
+    let duration = input.duration_minutes.unwrap_or(4);
+
+    format!(
+        "Turn this producer brief into a spoken podcast beat outline for a {duration}-minute single-host episode.\n\nProducer brief:\n{brief}\n\nReturn a tight outline with:\n- cold open beat\n- setup beat\n- 3 to 5 body beats, each with a concrete detail or example\n- transition notes between beats\n- closing beat that lands without sounding like a school essay\n\nDo not write full paragraphs yet. Make the structure sound like audio, not an article."
+    )
+}
+
+fn build_draft_prompt(input: &GeneratePodcastScriptInput, brief: &str, outline: &str) -> String {
+    let duration = input.duration_minutes.unwrap_or(4);
+    let voice_style = voice_style_description(input.voice_type.as_deref());
+
+    format!(
+        "Write the first full script draft from this brief and outline.\n\nTarget length: about {duration} minutes spoken aloud.\nVoice style: {voice_style}.\n\nProducer brief:\n{brief}\n\nBeat outline:\n{outline}\n\nReturn only a JSON object with exactly these keys:\n- title: concise episode title\n- summary: one sentence episode summary\n- hook: the opening hook, written as spoken audio\n- script: the full spoken script\n- voice_instructions: short TTS direction for the narrator\n- estimated_duration_minutes: integer estimate\n\nWriting rules:\n- sound like a real host talking, not an essay being read\n- vary sentence length and rhythm\n- use contractions naturally\n- include concrete details from the brief where useful\n- do not cite URLs aloud unless it is editorially natural\n- avoid \"In today's episode\", \"we'll explore\", \"delve\", \"landscape\", \"fascinating\", and generic wrap-up language\n- keep the script under 3200 characters"
+    )
+}
+
+fn build_editor_prompt(draft_json: &str) -> String {
+    format!(
+        "You are an audio editor cleaning up an AI-generated podcast script so it sounds human, specific, and ready for TTS.\n\nDraft JSON:\n{draft_json}\n\nReturn only a JSON object with exactly the same keys:\n- title\n- summary\n- hook\n- script\n- voice_instructions\n- estimated_duration_minutes\n\nEditing rules:\n- preserve factual claims from the draft; do not add new facts\n- remove AI cadence, generic throat-clearing, and essay transitions\n- make the first 20 seconds sharper\n- make every paragraph speakable in one breath or two\n- add light conversational rhythm, but no stage directions inside the script\n- keep the script under 3200 characters\n- keep estimated_duration_minutes as an integer"
     )
 }
 
@@ -168,7 +232,31 @@ fn image_prompt(input: &GenerateEpisodeGraphicInput) -> String {
 
 fn build_client(api_key: Option<String>) -> Result<Client<OpenAIConfig>, String> {
     let config = OpenAIConfig::new().with_api_key(openai_api_key(api_key)?);
-    Ok(Client::with_config(config))
+    Ok(Client::build(http_client()?, config))
+}
+
+async fn create_response_text(
+    client: &Client<OpenAIConfig>,
+    model: &str,
+    prompt: String,
+    max_output_tokens: u32,
+) -> Result<String, String> {
+    let request = CreateResponseArgs::default()
+        .model(model)
+        .input(prompt)
+        .max_output_tokens(max_output_tokens)
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .responses()
+        .create(request)
+        .await
+        .map_err(|error| format!("OpenAI request failed: {error}{}", format_error_chain(&error)))?;
+
+    response
+        .output_text()
+        .ok_or_else(|| "OpenAI response did not include any text output".to_string())
 }
 
 fn app_media_dir(app: &AppHandle, folder_name: &str) -> Result<PathBuf, String> {
@@ -190,7 +278,21 @@ fn unique_media_file_name(prefix: &str, extension: &str) -> String {
 }
 
 fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String> {
-    let parsed: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let trimmed = text.trim();
+    let json_text = if trimmed.starts_with("```") {
+        trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+    let json_text = match (json_text.find('{'), json_text.rfind('}')) {
+        (Some(start), Some(end)) if start <= end => &json_text[start..=end],
+        _ => json_text,
+    };
+    let parsed: Value = serde_json::from_str(json_text).map_err(|error| error.to_string())?;
     let title = parsed
         .get("title")
         .and_then(Value::as_str)
@@ -234,27 +336,41 @@ pub async fn generate_podcast_script(
 ) -> Result<GeneratePodcastScriptOutput, String> {
     let api_key = input.api_key.clone();
     let client = build_client(api_key)?;
-    let prompt = build_script_prompt(&input);
+    let script_model = normalize_script_model(input.script_model.as_deref());
 
-    let request = CreateResponseArgs::default()
-        .model(SCRIPT_MODEL)
-        .input(prompt)
-        .max_output_tokens(1600u32)
-        .temperature(0.7)
-        .build()
-        .map_err(|error| error.to_string())?;
+    let brief = create_response_text(
+        &client,
+        &script_model,
+        build_brief_prompt(&input),
+        1200u32,
+    )
+    .await?;
 
-    let response = client
-        .responses()
-        .create(request)
-        .await
-        .map_err(|error| error.to_string())?;
+    let outline = create_response_text(
+        &client,
+        &script_model,
+        build_outline_prompt(&input, &brief),
+        1200u32,
+    )
+    .await?;
 
-    let output_text = response
-        .output_text()
-        .ok_or_else(|| "OpenAI response did not include any text output".to_string())?;
+    let draft_json = create_response_text(
+        &client,
+        &script_model,
+        build_draft_prompt(&input, &brief, &outline),
+        2200u32,
+    )
+    .await?;
 
-    extract_json_object(&output_text)
+    let edited_json = create_response_text(
+        &client,
+        &script_model,
+        build_editor_prompt(&draft_json),
+        2200u32,
+    )
+    .await?;
+
+    extract_json_object(&edited_json)
 }
 
 #[tauri::command]
@@ -289,7 +405,7 @@ pub async fn generate_podcast_voice(
         .speech()
         .create(request)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("OpenAI speech request failed: {error}{}", format_error_chain(&error)))?;
 
     let extension = match response_format {
         "wav" => "wav",
@@ -328,7 +444,7 @@ pub async fn generate_episode_graphic(
         .images()
         .generate_byot(request)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("OpenAI image request failed: {error}{}", format_error_chain(&error)))?;
 
     let image_base64 = response
         .get("data")

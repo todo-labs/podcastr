@@ -1,6 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{env, error::Error as StdError};
 
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 
@@ -42,15 +42,7 @@ struct ExaSearchRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExaSearchContents {
-    highlights: ExaHighlightsOptions,
-    max_age_hours: u8,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ExaHighlightsOptions {
-    query: String,
-    max_characters: u16,
+    highlights: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +71,26 @@ fn exa_api_key(api_key: Option<String>) -> Result<String, String> {
     }
 }
 
+fn http_client() -> Result<Client, String> {
+    Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|error| error.to_string())
+}
+
+fn format_error_chain(error: &dyn StdError) -> String {
+    let mut details = String::new();
+    let mut current = error.source();
+
+    while let Some(source) = current {
+        details.push_str("\n- ");
+        details.push_str(&source.to_string());
+        current = source.source();
+    }
+
+    details
+}
+
 #[tauri::command]
 pub async fn search_episode_research(
     input: SearchEpisodeResearchInput,
@@ -95,27 +107,19 @@ pub async fn search_episode_research(
     }
 
     let request = ExaSearchRequest {
-      query: query.clone(),
-      search_type: "auto".to_string(),
-      num_results,
-      contents: ExaSearchContents {
-          highlights: ExaHighlightsOptions {
-              query: format!(
-                  "Facts, recent developments, named examples, dates, and concrete details about {query}"
-              ),
-              max_characters: 700,
-          },
-          max_age_hours: 24,
-      },
-  };
+        query: query.clone(),
+        search_type: "auto".to_string(),
+        num_results,
+        contents: ExaSearchContents { highlights: true },
+    };
 
-    let response = Client::new()
+    let response = http_client()?
         .post(EXA_SEARCH_URL)
         .header("x-api-key", api_key)
         .json(&request)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("Exa request failed: {error}{}", format_error_chain(&error)))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -126,7 +130,7 @@ pub async fn search_episode_research(
     let search_response = response
         .json::<ExaSearchResponse>()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("Exa response parse failed: {error}{}", format_error_chain(&error)))?;
 
     Ok(SearchEpisodeResearchOutput {
         query,

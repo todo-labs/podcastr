@@ -9,7 +9,7 @@ edition = "2021"
 rust-version = "1.77"
 
 [build-dependencies]
-tauri-build = { version = "2" }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.22"
@@ -19,7 +19,7 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [features]
 default = []
