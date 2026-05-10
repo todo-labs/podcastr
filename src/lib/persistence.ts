@@ -10,7 +10,7 @@ type AppSettings = {
 
 type OnboardingState = {
   completed: boolean
-  selectedTopics: string[]
+  selectedThemes: string[]
 }
 
 type FeedbackRating = "positive" | "negative" | "neutral"
@@ -130,20 +130,27 @@ export async function getOnboardingState(): Promise<OnboardingState> {
   if (!raw) {
     return {
       completed: false,
-      selectedTopics: [],
+      selectedThemes: [],
     }
   }
 
   try {
     const parsed = JSON.parse(raw) as OnboardingState
+    const legacyState = parsed as unknown as { selectedTopics?: string[] }
+    const selectedThemes = Array.isArray(parsed.selectedThemes)
+      ? parsed.selectedThemes
+      : Array.isArray(legacyState.selectedTopics)
+        ? legacyState.selectedTopics
+        : []
+
     return {
       completed: !!parsed.completed,
-      selectedTopics: Array.isArray(parsed.selectedTopics) ? parsed.selectedTopics : [],
+      selectedThemes,
     }
   } catch {
     return {
       completed: false,
-      selectedTopics: [],
+      selectedThemes: [],
     }
   }
 }
@@ -155,7 +162,7 @@ export async function saveOnboardingState(state: OnboardingState) {
 export async function resetOnboardingState() {
   await saveOnboardingState({
     completed: false,
-    selectedTopics: [],
+    selectedThemes: [],
   })
 }
 

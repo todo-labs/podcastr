@@ -21,8 +21,8 @@ export function RootPage() {
     }
   }, [])
 
-  const handleOnboardingComplete = async (selectedTopics: string[]) => {
-    await saveOnboardingState({ completed: true, selectedTopics })
+  const handleOnboardingComplete = async (selectedThemes: string[]) => {
+    await saveOnboardingState({ completed: true, selectedThemes })
     setHasCompletedOnboarding(true)
   }
 

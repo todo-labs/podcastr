@@ -3,43 +3,21 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Check, Sparkles } from "lucide-react"
+import { Sparkles } from "lucide-react"
+import { ThemePicker } from "@/components/theme-picker"
 import { cn } from "@/lib/utils"
 
-const TOPICS = [
-  { id: "technology", label: "Technology", icon: "💻" },
-  { id: "business", label: "Business", icon: "💼" },
-  { id: "science", label: "Science", icon: "🔬" },
-  { id: "health", label: "Health & Wellness", icon: "🏃" },
-  { id: "entertainment", label: "Entertainment", icon: "🎬" },
-  { id: "sports", label: "Sports", icon: "⚽" },
-  { id: "news", label: "News & Politics", icon: "📰" },
-  { id: "education", label: "Education", icon: "📚" },
-  { id: "music", label: "Music", icon: "🎵" },
-  { id: "comedy", label: "Comedy", icon: "😂" },
-  { id: "history", label: "History", icon: "🏛️" },
-  { id: "true-crime", label: "True Crime", icon: "🔍" },
-  { id: "arts", label: "Arts & Culture", icon: "🎨" },
-  { id: "food", label: "Food & Cooking", icon: "🍳" },
-  { id: "travel", label: "Travel", icon: "✈️" },
-  { id: "psychology", label: "Psychology", icon: "🧠" },
-]
-
 interface OnboardingFlowProps {
-  onComplete: (selectedTopics: string[]) => void
+  onComplete: (selectedThemes: string[]) => void
 }
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [step, setStep] = useState(1)
-  const [selectedTopics, setSelectedTopics] = useState<string[]>([])
-
-  const toggleTopic = (topicId: string) => {
-    setSelectedTopics((prev) => (prev.includes(topicId) ? prev.filter((id) => id !== topicId) : [...prev, topicId]))
-  }
+  const [selectedThemes, setSelectedThemes] = useState<string[]>([])
 
   const handleContinue = () => {
-    if (step === 2 && selectedTopics.length > 0) {
-      onComplete(selectedTopics)
+    if (step === 2 && selectedThemes.length > 0) {
+      onComplete(selectedThemes)
     } else {
       setStep(2)
     }
@@ -100,42 +78,18 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         ) : (
           <div className="max-w-4xl mx-auto space-y-8">
             <div className="text-center space-y-3">
-              <h1 className="text-4xl font-bold tracking-tight">Choose Your Interests</h1>
-              <p className="text-lg text-muted-foreground">Select at least 3 topics to personalize your podcast feed</p>
+              <h1 className="text-4xl font-bold tracking-tight">Choose Your Themes</h1>
+              <p className="text-lg text-muted-foreground">Select at least 3 themes to personalize your podcast feed</p>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-              {TOPICS.map((topic) => {
-                const isSelected = selectedTopics.includes(topic.id)
-                return (
-                  <Card
-                    key={topic.id}
-                    className={cn(
-                      "relative p-6 cursor-pointer transition-all hover:scale-105 hover:shadow-lg",
-                      isSelected && "ring-2 ring-primary bg-primary/5",
-                    )}
-                    onClick={() => toggleTopic(topic.id)}
-                  >
-                    <div className="flex flex-col items-center gap-3 text-center">
-                      <div className="text-4xl">{topic.icon}</div>
-                      <span className="font-medium text-sm">{topic.label}</span>
-                    </div>
-                    {isSelected && (
-                      <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">
-                        <Check className="w-4 h-4 text-primary-foreground" />
-                      </div>
-                    )}
-                  </Card>
-                )
-              })}
-            </div>
+            <ThemePicker selectedThemes={selectedThemes} onChange={setSelectedThemes} />
 
             <div className="flex items-center justify-center gap-4 pt-4">
               <Button variant="outline" onClick={() => setStep(1)} size="lg">
                 Back
               </Button>
-              <Button onClick={handleContinue} disabled={selectedTopics.length < 3} size="lg" className="px-8">
-                Continue ({selectedTopics.length} selected)
+              <Button onClick={handleContinue} disabled={selectedThemes.length < 3} size="lg" className="px-8">
+                Continue ({selectedThemes.length} selected)
               </Button>
             </div>
           </div>
