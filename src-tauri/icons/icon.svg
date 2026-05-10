@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Amber gradient: bright top, richer base -->
+    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#f2bc5e"/>
+      <stop offset="55%"  stop-color="#d4922f"/>
+      <stop offset="100%" stop-color="#a86718"/>
+    </linearGradient>
+
+    <!-- Soft amber glow behind each bar -->
+    <filter id="amberGlow" x="-40%" y="-8%" width="180%" height="116%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="22" result="blur"/>
+    </filter>
+
+    <!-- Warm ambient lift in center of canvas -->
+    <radialGradient id="bgAmbient" cx="50%" cy="56%" r="48%">
+      <stop offset="0%"   stop-color="#281708" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0e0904" stop-opacity="1"/>
+    </radialGradient>
+
+    <!-- Subtle floor-reflection fade under each bar -->
+    <linearGradient id="reflectGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#d4922f" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#d4922f" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ── Background ───────────────────────────────────────────── -->
+  <rect width="1024" height="1024" fill="#0e0904"/>
+  <rect width="1024" height="1024" fill="url(#bgAmbient)"/>
+
+  <!-- ── Glow layer (blurred duplicate bars) ──────────────────── -->
+  <!--
+    Bar layout:
+      width=80px per bar, gap=28px → total span=512px
+      left margin = (1024-512)/2 = 256
+      x left edges: 256, 364, 472, 580, 688
+      y_bottom = 890
+      max bar height = 756 (top at 134, gives ~134px head-room)
+      Heights: 42% 68% 100% 57% 29%
+        Bar1: 318   y=572
+        Bar2: 514   y=376
+        Bar3: 756   y=134
+        Bar4: 431   y=459
+        Bar5: 219   y=671
+  -->
+  <g filter="url(#amberGlow)" opacity="0.55">
+    <rect x="256" y="572" width="80" height="318" fill="#d4922f"/>
+    <rect x="364" y="376" width="80" height="514" fill="#d4922f"/>
+    <rect x="472" y="134" width="80" height="756" fill="#d4922f"/>
+    <rect x="580" y="459" width="80" height="431" fill="#d4922f"/>
+    <rect x="688" y="671" width="80" height="219" fill="#d4922f"/>
+  </g>
+
+  <!-- ── Main bars ─────────────────────────────────────────────── -->
+  <rect x="256" y="572" width="80" height="318" fill="url(#barGrad)" rx="5" ry="5"/>
+  <rect x="364" y="376" width="80" height="514" fill="url(#barGrad)" rx="5" ry="5"/>
+  <rect x="472" y="134" width="80" height="756" fill="url(#barGrad)" rx="5" ry="5"/>
+  <rect x="580" y="459" width="80" height="431" fill="url(#barGrad)" rx="5" ry="5"/>
+  <rect x="688" y="671" width="80" height="219" fill="url(#barGrad)" rx="5" ry="5"/>
+
+  <!-- ── Floor reflections (mirrored, fading down) ─────────────── -->
+  <rect x="256" y="890" width="80" height="60"  fill="url(#reflectGrad)" rx="3"/>
+  <rect x="364" y="890" width="80" height="100" fill="url(#reflectGrad)" rx="3"/>
+  <rect x="472" y="890" width="80" height="120" fill="url(#reflectGrad)" rx="3"/>
+  <rect x="580" y="890" width="80" height="90"  fill="url(#reflectGrad)" rx="3"/>
+  <rect x="688" y="890" width="80" height="50"  fill="url(#reflectGrad)" rx="3"/>
+
+  <!-- ── Floor line ────────────────────────────────────────────── -->
+  <rect x="230" y="889" width="564" height="1.5" fill="#d4922f" opacity="0.22"/>
+</svg>
