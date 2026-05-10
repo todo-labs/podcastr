@@ -23,3 +23,14 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 
 [features]
 default = []
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Flag clones that the compiler could have elided.
+redundant_clone = "warn"
+# Flag intermediate .collect() calls that are immediately re-iterated.
+needless_collect = "warn"
+# Flag enum variants that are significantly larger than the others (consider Box).
+large_enum_variant = "warn"
