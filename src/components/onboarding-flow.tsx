@@ -2,8 +2,6 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Sparkles } from "lucide-react"
 import { ThemePicker } from "@/components/theme-picker"
 import { cn } from "@/lib/utils"
 
@@ -11,12 +9,64 @@ interface OnboardingFlowProps {
   onComplete: (selectedThemes: string[]) => void
 }
 
+function WaveformMark({ className }: { className?: string }) {
+  const heights = [3, 5, 8, 11, 14, 11, 8, 5, 3]
+  return (
+    <div className={cn("flex items-center gap-[2px]", className)}>
+      {heights.map((h, i) => (
+        <div
+          key={i}
+          className="w-[3px] bg-primary rounded-[1px]"
+          style={{ height: `${h}px` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function WaveformHero() {
+  const bars = Array.from({ length: 40 }, (_, i) => i)
+  return (
+    <div className="flex items-center justify-center gap-[3px] h-16">
+      {bars.map((i) => (
+        <div
+          key={i}
+          className="w-[4px] bg-primary rounded-[1px]"
+          style={{
+            animation: `waveBar ${0.8 + (i % 7) * 0.15}s ease-in-out infinite alternate`,
+            animationDelay: `${(i * 0.05) % 0.7}s`,
+            opacity: 0.5 + (i % 3) * 0.2,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+const FEATURES = [
+  {
+    code: "AI",
+    label: "Neural script generation",
+    description: "GPT-powered writing shaped by your selected topics and web research",
+  },
+  {
+    code: "LOCAL",
+    label: "Runs entirely on-device",
+    description: "No cloud dependency. Your episodes, your data, your machine.",
+  },
+  {
+    code: "TTS",
+    label: "Studio-grade voice synthesis",
+    description: "OpenAI TTS voices rendered locally to disk — ready to play instantly",
+  },
+]
+
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [step, setStep] = useState(1)
   const [selectedThemes, setSelectedThemes] = useState<string[]>([])
 
   const handleContinue = () => {
-    if (step === 2 && selectedThemes.length > 0) {
+    if (step === 2 && selectedThemes.length >= 3) {
       onComplete(selectedThemes)
     } else {
       setStep(2)
@@ -26,70 +76,82 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b border-border">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <span className="font-semibold text-lg">Podcastr</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={cn("w-2 h-2 rounded-full transition-colors", step >= 1 ? "bg-primary" : "bg-muted")} />
-            <div className={cn("w-2 h-2 rounded-full transition-colors", step >= 2 ? "bg-primary" : "bg-muted")} />
-          </div>
+      <header className="border-b border-border px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <WaveformMark />
+          <span className="font-mono text-xs uppercase tracking-[0.25em] text-foreground">Podcastr</span>
         </div>
+        <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-widest">
+          STEP {step} OF 2
+        </span>
       </header>
 
       {/* Content */}
-      <main className="flex-1 container mx-auto px-4 py-12">
+      <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">
         {step === 1 ? (
-          <div className="max-w-2xl mx-auto text-center space-y-8">
-            <div className="space-y-4">
-              <h1 className="text-5xl font-bold tracking-tight text-balance">Welcome to AI-Powered Podcasting</h1>
-              <p className="text-xl text-muted-foreground text-pretty leading-relaxed">
-                Create personalized podcasts on any topic with the power of AI. Your audio content, generated locally on
-                your device.
-              </p>
+          <div className="max-w-lg w-full space-y-12">
+            {/* Hero */}
+            <div className="space-y-6 text-center">
+              <WaveformHero />
+              <div className="space-y-3">
+                <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-muted-foreground">
+                  Local-first AI podcasting
+                </p>
+                <h1 className="text-4xl font-bold tracking-tight leading-tight text-foreground">
+                  Your studio.<br />Your signal.
+                </h1>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-8">
-              <Card className="p-6 text-center space-y-2">
-                <div className="text-4xl mb-2">🎙️</div>
-                <h3 className="font-semibold">AI Generation</h3>
-                <p className="text-sm text-muted-foreground">Advanced AI creates engaging podcast content</p>
-              </Card>
-              <Card className="p-6 text-center space-y-2">
-                <div className="text-4xl mb-2">💾</div>
-                <h3 className="font-semibold">Local First</h3>
-                <p className="text-sm text-muted-foreground">All your data stays on your device</p>
-              </Card>
-              <Card className="p-6 text-center space-y-2">
-                <div className="text-4xl mb-2">⚡</div>
-                <h3 className="font-semibold">Instant Access</h3>
-                <p className="text-sm text-muted-foreground">Listen anytime, anywhere, offline</p>
-              </Card>
+            {/* Feature table */}
+            <div className="border border-border divide-y divide-border">
+              {FEATURES.map((f) => (
+                <div key={f.code} className="flex items-start gap-6 px-5 py-4">
+                  <span className="font-mono text-[10px] text-primary tracking-widest mt-0.5 w-10 shrink-0 uppercase">
+                    {f.code}
+                  </span>
+                  <div className="space-y-0.5 min-w-0">
+                    <p className="font-mono text-sm text-foreground">{f.label}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{f.description}</p>
+                  </div>
+                </div>
+              ))}
             </div>
 
-            <Button size="lg" onClick={handleContinue} className="px-8">
-              Get Started
-            </Button>
+            <div className="flex justify-center">
+              <Button onClick={handleContinue} size="lg" className="font-mono tracking-widest px-8">
+                ENTER STUDIO →
+              </Button>
+            </div>
           </div>
         ) : (
-          <div className="max-w-4xl mx-auto space-y-8">
-            <div className="text-center space-y-3">
-              <h1 className="text-4xl font-bold tracking-tight">Choose Your Themes</h1>
-              <p className="text-lg text-muted-foreground">Select at least 3 themes to personalize your podcast feed</p>
+          <div className="max-w-3xl w-full space-y-8">
+            <div className="space-y-2">
+              <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                Step 2 of 2
+              </p>
+              <h1 className="text-3xl font-bold tracking-tight text-foreground">Select your frequencies</h1>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Choose at least 3 topics. These drive what content gets researched and scripted for you.
+              </p>
             </div>
 
             <ThemePicker selectedThemes={selectedThemes} onChange={setSelectedThemes} />
 
-            <div className="flex items-center justify-center gap-4 pt-4">
-              <Button variant="outline" onClick={() => setStep(1)} size="lg">
-                Back
+            <div className="flex items-center gap-3 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setStep(1)}
+                className="font-mono tracking-widest text-xs"
+              >
+                ← BACK
               </Button>
-              <Button onClick={handleContinue} disabled={selectedThemes.length < 3} size="lg" className="px-8">
-                Continue ({selectedThemes.length} selected)
+              <Button
+                onClick={handleContinue}
+                disabled={selectedThemes.length < 3}
+                className="font-mono tracking-widest text-xs px-6"
+              >
+                LAUNCH ({selectedThemes.length} selected)
               </Button>
             </div>
           </div>

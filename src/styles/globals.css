@@ -3,80 +3,98 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Podcastr — broadcast studio palette
+ * Dark-first: the color of a recording booth at midnight
+ * Amber accent: the glow of VU meters and tube amplifiers
+ * IBM Plex Mono throughout: precision instrument readouts
+ */
 :root {
-  --background: oklch(0.98 0 0);
-  --foreground: oklch(0.12 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.12 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.12 0 0);
-  --primary: oklch(0.42 0.19 264);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.92 0 0);
-  --secondary-foreground: oklch(0.12 0 0);
-  --muted: oklch(0.95 0 0);
-  --muted-foreground: oklch(0.52 0 0);
-  --accent: oklch(0.55 0.22 280);
-  --accent-foreground: oklch(0.98 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.88 0 0);
-  --input: oklch(0.88 0 0);
-  --ring: oklch(0.42 0.19 264);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.75rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Surfaces — stacked charcoal, warm undertone */
+  --background: oklch(0.09 0.015 52);       /* studio floor — deepest surface */
+  --foreground: oklch(0.93 0.013 78);       /* warm paper-white, tungsten lamp */
+  --card: oklch(0.13 0.012 52);             /* console surface */
+  --card-foreground: oklch(0.93 0.013 78);
+  --popover: oklch(0.18 0.010 52);          /* elevated — dropdowns above cards */
+  --popover-foreground: oklch(0.93 0.013 78);
+
+  /* Brand — amber, the VU meter glow */
+  --primary: oklch(0.73 0.17 67);
+  --primary-foreground: oklch(0.09 0.015 52);
+
+  /* Neutrals */
+  --secondary: oklch(0.19 0.010 52);
+  --secondary-foreground: oklch(0.80 0.010 75);
+  --muted: oklch(0.16 0.008 52);
+  --muted-foreground: oklch(0.50 0.010 68);
+  --accent: oklch(0.73 0.17 67);
+  --accent-foreground: oklch(0.09 0.015 52);
+
+  /* Semantic */
+  --destructive: oklch(0.55 0.22 20);       /* recording light red */
+  --destructive-foreground: oklch(0.95 0 0);
+
+  /* Structure — whisper-quiet borders */
+  --border: oklch(0.22 0.008 52);
+  --input: oklch(0.15 0.008 52);
+  --ring: oklch(0.73 0.17 67);
+
+  /* Sharper corners — technical precision */
+  --radius: 0.25rem;
+
+  /* Charts */
+  --chart-1: oklch(0.73 0.17 67);
+  --chart-2: oklch(0.58 0.15 145);
+  --chart-3: oklch(0.55 0.22 20);
+  --chart-4: oklch(0.65 0.10 220);
+  --chart-5: oklch(0.60 0.12 300);
+
+  /* Sidebar — same hue, minimal elevation difference */
+  --sidebar: oklch(0.11 0.012 52);
+  --sidebar-foreground: oklch(0.93 0.013 78);
+  --sidebar-primary: oklch(0.73 0.17 67);
+  --sidebar-primary-foreground: oklch(0.09 0.015 52);
+  --sidebar-accent: oklch(0.17 0.010 52);
+  --sidebar-accent-foreground: oklch(0.80 0.010 75);
+  --sidebar-border: oklch(0.20 0.008 52);
+  --sidebar-ring: oklch(0.73 0.17 67);
 }
 
+/* Dark mode mirrors root — app is always studio-dark */
 .dark {
-  --background: oklch(0.08 0 0);
-  --foreground: oklch(0.98 0 0);
-  --card: oklch(0.12 0 0);
-  --card-foreground: oklch(0.98 0 0);
-  --popover: oklch(0.12 0 0);
-  --popover-foreground: oklch(0.98 0 0);
-  --primary: oklch(0.55 0.22 280);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.18 0 0);
-  --secondary-foreground: oklch(0.98 0 0);
-  --muted: oklch(0.16 0 0);
-  --muted-foreground: oklch(0.62 0 0);
-  --accent: oklch(0.55 0.22 280);
-  --accent-foreground: oklch(0.98 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.22 0 0);
-  --input: oklch(0.22 0 0);
-  --ring: oklch(0.55 0.22 280);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.12 0 0);
-  --sidebar-foreground: oklch(0.98 0 0);
-  --sidebar-primary: oklch(0.55 0.22 280);
-  --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.18 0 0);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(0.22 0 0);
-  --sidebar-ring: oklch(0.55 0.22 280);
+  --background: oklch(0.09 0.015 52);
+  --foreground: oklch(0.93 0.013 78);
+  --card: oklch(0.13 0.012 52);
+  --card-foreground: oklch(0.93 0.013 78);
+  --popover: oklch(0.18 0.010 52);
+  --popover-foreground: oklch(0.93 0.013 78);
+  --primary: oklch(0.73 0.17 67);
+  --primary-foreground: oklch(0.09 0.015 52);
+  --secondary: oklch(0.19 0.010 52);
+  --secondary-foreground: oklch(0.80 0.010 75);
+  --muted: oklch(0.16 0.008 52);
+  --muted-foreground: oklch(0.50 0.010 68);
+  --accent: oklch(0.73 0.17 67);
+  --accent-foreground: oklch(0.09 0.015 52);
+  --destructive: oklch(0.55 0.22 20);
+  --destructive-foreground: oklch(0.95 0 0);
+  --border: oklch(0.22 0.008 52);
+  --input: oklch(0.15 0.008 52);
+  --ring: oklch(0.73 0.17 67);
+  --sidebar: oklch(0.11 0.012 52);
+  --sidebar-foreground: oklch(0.93 0.013 78);
+  --sidebar-primary: oklch(0.73 0.17 67);
+  --sidebar-primary-foreground: oklch(0.09 0.015 52);
+  --sidebar-accent: oklch(0.17 0.010 52);
+  --sidebar-accent-foreground: oklch(0.80 0.010 75);
+  --sidebar-border: oklch(0.20 0.008 52);
+  --sidebar-ring: oklch(0.73 0.17 67);
 }
 
 @theme inline {
-  --font-sans: "Inter", "Segoe UI", Arial, sans-serif;
+  /* IBM Plex Mono throughout — precision instrument readouts */
+  --font-sans: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -101,10 +119,10 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -115,13 +133,34 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* ─── Waveform animations ─────────────────────────────── */
+
+/* Each bar scales from its natural height to full and back */
+@keyframes waveBar {
+  0%, 100% { transform: scaleY(0.2); }
+  50% { transform: scaleY(1); }
+}
+
+/* Dot blink — ON AIR indicator */
+@keyframes signalBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* Subtle fade pulse — for loading states */
+@keyframes signalPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
 
+  /* Always dark — studio never has the lights on */
   html {
-    color-scheme: light;
+    color-scheme: dark;
   }
 
   html.dark {
@@ -137,5 +176,10 @@
   a {
     color: inherit;
     text-decoration: none;
+  }
+
+  /* Monospace numerals throughout — tabular alignment */
+  * {
+    font-variant-numeric: tabular-nums;
   }
 }

@@ -1,6 +1,5 @@
 "use client"
 
-import { Card } from "@/components/ui/card"
 import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { PODCAST_THEMES, type PodcastThemeId } from "@/lib/themes"
@@ -23,35 +22,37 @@ export function ThemePicker({ selectedThemes, onChange, minSelected = 3, classNa
 
   return (
     <div className={cn("space-y-4", className)}>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
         {PODCAST_THEMES.map((theme) => {
           const isSelected = selectedThemes.includes(theme.id)
 
           return (
-            <Card
+            <button
               key={theme.id}
-              className={cn(
-                "relative p-4 md:p-5 cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg",
-                isSelected && "ring-2 ring-primary bg-primary/5",
-              )}
+              type="button"
               onClick={() => toggleTheme(theme.id)}
+              className={cn(
+                "relative p-4 border text-left transition-colors cursor-pointer",
+                "flex flex-col items-center gap-2 text-center",
+                isSelected
+                  ? "border-primary text-foreground bg-primary/5"
+                  : "border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground",
+              )}
             >
-              <div className="flex flex-col items-center gap-3 text-center">
-                <div className="text-3xl md:text-4xl">{theme.icon}</div>
-                <span className="font-medium text-sm leading-tight">{theme.label}</span>
-              </div>
+              <span className="text-xl leading-none">{theme.icon}</span>
+              <span className="font-mono text-[10px] uppercase tracking-widest leading-tight">{theme.label}</span>
               {isSelected && (
-                <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">
-                  <Check className="w-4 h-4 text-primary-foreground" />
+                <div className="absolute top-1.5 right-1.5 w-4 h-4 bg-primary flex items-center justify-center">
+                  <Check className="w-2.5 h-2.5 text-primary-foreground" />
                 </div>
               )}
-            </Card>
+            </button>
           )
         })}
       </div>
 
-      <p className="text-sm text-muted-foreground text-center">
-        Select at least {minSelected} themes to personalize your feed
+      <p className="font-mono text-[10px] text-muted-foreground text-center uppercase tracking-widest">
+        Select at least {minSelected} frequencies to personalize your feed
       </p>
     </div>
   )
