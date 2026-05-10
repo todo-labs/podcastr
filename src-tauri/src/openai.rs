@@ -110,10 +110,27 @@ fn format_error_chain(error: &dyn StdError) -> String {
 
 fn voice_style_description(voice_type: Option<&str>) -> &'static str {
     match voice_type {
-        Some("professional") => "clear, authoritative, and polished",
-        Some("energetic") => "bright, fast-paced, and dynamic",
-        Some("calm") => "steady, warm, and soothing",
-        _ => "natural, conversational, and easy to follow",
+        Some("professional") => {
+            "authoritative but human — the host speaks like a senior journalist or analyst who has done their homework. \
+             Sentences are crisp but not clipped. Opinions are stated plainly. \
+             No hedging, no throat-clearing. The host earns credibility through specificity, not formality."
+        }
+        Some("energetic") => {
+            "fast-thinking and direct — the host speaks like someone who gets genuinely excited about ideas \
+             and wants the listener to feel that pull. Short punchy sentences follow longer explanations. \
+             The energy comes from genuine curiosity, not performance. \
+             The host moves fast but never skips the payoff."
+        }
+        Some("calm") => {
+            "unhurried and thoughtful — the host talks like a trusted friend who has had time to think something through \
+             and wants to share it carefully. Longer sentences, natural pauses implied by the text. \
+             The host admits uncertainty when it exists. The listener feels like they are being talked to, not at."
+        }
+        _ => {
+            "conversational and grounded — the host sounds like a smart person explaining something interesting \
+             to someone they respect. Not a lecturer, not a hype man. Just someone who found something worth sharing \
+             and is telling you about it the way you would over a long lunch."
+        }
     }
 }
 
@@ -177,7 +194,39 @@ fn build_brief_prompt(input: &GeneratePodcastScriptInput, target_duration: u32, 
     let research_context = research_section(input);
 
     format!(
-        "You are a senior podcast producer. Build a compact episode brief for a {target_duration}-minute single-host episode.\n\nAudience interests: {themes}\nDesired voice: {voice_style}.\nTarget length: about {target_duration} minutes spoken aloud, roughly {word_count} words.{research_context}\n\nWrite a brief with these sections:\n- angle: the specific point of view, tension, or question the episode is built around\n- audience promise: what the listener will understand by the end\n- intro beat: how the episode should open and orient the listener\n- conclusion beat: how the episode should land and what the final thought is\n- must-use details: concrete facts, dated details, named examples, and source URLs worth using\n- avoid: generic claims, stale facts, essay phrasing, and anything unsupported by the research notes\n- sound: how the host should feel on mic\n\nPrefer grounded, specific details over broad commentary. Do not write the script yet.",
+        "You are a researcher who has just finished a deep read on a set of topics for a podcast host you work closely with. \
+         Your job is not to plan a podcast episode — your job is to brief your boss on what you found, \
+         what surprised you, what the real story is, and what they should say about it.\n\n\
+         The host's audience cares about: {themes}\n\
+         The host's on-mic register: {voice_style}\n\
+         Episode length: {target_duration} minutes spoken aloud (roughly {word_count} words).\
+         {research_context}\n\n\
+         Write a research brief with these sections:\n\n\
+         ANGLE\n\
+         What is the actual story here? Not the topic — the story. What tension, reversal, or question makes this worth \
+         a full episode? What would make a smart listener sit up? Give one sharp sentence, then explain it in two or three more.\n\n\
+         THE TURN\n\
+         What is the single fact, detail, or idea in this material that reframes everything else? \
+         This is the thing the host builds toward. It should feel like a reveal, not a conclusion.\n\n\
+         WHAT SURPRISED ME\n\
+         What did you not expect to find? What assumption did the research challenge? \
+         This is the part where the host can say \"I thought X, but it turns out...\" — which is the most human thing a host can do.\n\n\
+         AUDIENCE PROMISE\n\
+         What will the listener understand by the end that they did not understand at the start? \
+         Not what they will \"learn\" — what will land differently for them after they hear this.\n\n\
+         OPENING MOVE\n\
+         How should the episode start? Not an intro — the first thing the host says. It should drop the listener into something: \
+         a scene, a number, a quote, a question, a claim. Not a welcome, not a setup. The thing itself.\n\n\
+         CONCRETE MATERIAL\n\
+         List the specific facts, named people or companies, dates, numbers, and examples worth using. \
+         Only include things you can support from the research. Mark anything uncertain with [uncertain].\n\n\
+         WHAT TO AVOID\n\
+         What would make this episode feel generic? What angles are overdone, what facts are stale, \
+         what would a lazy version of this episode say?\n\n\
+         HOW IT SHOULD FEEL\n\
+         Describe the emotional texture of the episode in two or three sentences. \
+         Not the delivery — the feeling. Should the listener feel unsettled? Energized? Quietly impressed? Why?\n\n\
+         Do not write the script. Do not write in podcast language. Write like you are briefing your boss before a recording session.",
         themes = themes,
         voice_style = voice_style,
         target_duration = target_duration,
@@ -189,7 +238,37 @@ fn build_brief_prompt(input: &GeneratePodcastScriptInput, target_duration: u32, 
 fn build_outline_prompt(brief: &str, target_duration: u32) -> String {
 
     format!(
-        "Turn this producer brief into a spoken podcast beat outline for a {target_duration}-minute single-host episode.\n\nProducer brief:\n{brief}\n\nReturn a tight outline with:\n- cold open beat\n- intro beat: orient the listener and state why the topic matters now\n- 5 to 7 body beats, each with a concrete detail, example, contrast, or turn\n- transition notes between beats\n- conclusion beat: synthesize the episode and leave the listener with a clear final thought\n- outro beat: a short ending that feels human, not promotional\n\nDo not write full paragraphs yet. Make the structure sound like audio, not an article. The outline should support a real podcast episode, not a 5-minute synopsis."
+        "You have a research brief for a {target_duration}-minute single-host podcast episode. \
+         Turn it into a spoken audio outline — not a content plan, but a map of how the episode actually moves.\n\n\
+         Research brief:\n{brief}\n\n\
+         Build the outline with these beats. For each beat, write: what the host says or does, and how it feels.\n\n\
+         COLD OPEN (30-60 seconds)\n\
+         The first thing the host says. No welcome, no setup. Drop the listener into something specific — \
+         a scene, a number, a claim, a question. The listener should be three sentences in before they know \
+         what the episode is about. That uncertainty should feel good, not confusing.\n\n\
+         ENTRY (1-2 minutes)\n\
+         The host earns the listener's attention by saying something unexpected or specific. \
+         This is not an intro. It does not explain what is coming. It starts making the case for why this matters \
+         by showing rather than telling. By the end of this beat, the listener should feel oriented but still curious.\n\n\
+         BODY BEATS (5 to 8 beats for the main content)\n\
+         Each beat must have: a concrete detail or named example, a turn or complication (what makes this interesting, \
+         not just informative), and a note on how it connects to what comes next — not as a spoken transition, \
+         but as a logical or emotional thread. \
+         At least one beat should include the host's own reasoning or take. \
+         At least one beat should contain a moment of admitted uncertainty or speculation, clearly flagged. \
+         One beat should be THE TURN from the brief — the reframe that makes everything else click.\n\n\
+         LANDING (2-3 minutes)\n\
+         The host does not summarize. They arrive somewhere. The final thought should be the one thing \
+         the listener carries out. It should feel earned, not tacked on. \
+         It can be a question, a statement, or a small revelation — but it should not recap what just happened.\n\n\
+         OUTRO (30-45 seconds)\n\
+         Short. Human. The host sounds like themselves, not like a sign-off template. \
+         No calls to action unless they feel completely natural. No \"thanks for listening\".\n\n\
+         Do not write full sentences yet. Write enough per beat that the script writer knows exactly what to say \
+         and how it should feel. Note any places where the host might pause, repeat themselves, \
+         or take a beat to think — those are moments that make audio feel real.",
+        brief = brief,
+        target_duration = target_duration
     )
 }
 
@@ -197,13 +276,109 @@ fn build_draft_prompt(input: &GeneratePodcastScriptInput, brief: &str, outline: 
     let voice_style = voice_style_description(input.voice_type.as_deref());
 
     format!(
-        "Write the first full script draft from this brief and outline.\n\nTarget length: about {target_duration} minutes spoken aloud, roughly {word_count} words.\nVoice style: {voice_style}.\n\nProducer brief:\n{brief}\n\nBeat outline:\n{outline}\n\nReturn only a JSON object with exactly these keys:\n- title: concise episode title\n- summary: one sentence episode summary\n- hook: the opening hook, written as spoken audio\n- intro: the opening segment after the hook that properly sets the episode up\n- conclusion: the ending segment that lands the episode and gives it closure\n- script: the full spoken script\n- voice_instructions: short TTS direction for the narrator\n- estimated_duration_minutes: integer estimate\n\nWriting rules:\n- sound like a real host talking, not an essay being read\n- start with a hook, then a clear intro, then the body, then a real conclusion\n- vary sentence length and rhythm\n- use contractions naturally\n- include concrete details from the brief where useful\n- if the research is thin, lean into implications, examples, and the host's reasoning rather than filler\n- do not cite URLs aloud unless it is editorially natural\n- avoid \"In today's episode\", \"we'll explore\", \"delve\", \"landscape\", \"fascinating\", and generic wrap-up language\n- keep the full script long enough to reach the target duration; do not compress it into a synopsis"
+        "Write a full podcast script from this brief and outline. \
+         Target: {target_duration} minutes spoken aloud, roughly {word_count} words.\n\n\
+         HOST REGISTER: {voice_style}\n\n\
+         Research brief:\n{brief}\n\n\
+         Beat outline:\n{outline}\n\n\
+         HOW TO WRITE THIS\n\n\
+         Think of this host as someone who had a good researcher brief them, and is now telling their audience \
+         about what they found — the way a smart person talks to a friend they respect, not the way a lecturer \
+         addresses a class. The host has done their homework. They have opinions. They find this genuinely interesting. \
+         None of that should be performed — it should come through in the specifics they choose and the way they talk about them.\n\n\
+         The script should sound like it was written once, fast, by someone who knew what they wanted to say. \
+         Not polished. Not constructed. Not outlined with bullet points in their head. \
+         The host moves through ideas the way a person does — with momentum, occasional self-correction, \
+         and a clear sense of where they are going even when they take a detour.\n\n\
+         THINGS THAT MAKE IT SOUND REAL:\n\
+         - The host states opinions plainly. Not \"some would argue\" — \"I think\". Not \"it's interesting that\" — \"what gets me is\".\n\
+         - Sentences vary wildly in length. One sentence is four words. The next is twenty-five. That rhythm is the voice.\n\
+         - The host uses contractions everywhere. Always. No exceptions.\n\
+         - Occasionally the host pauses mid-thought and lands differently than you expected. That's a real person thinking.\n\
+         - Concrete details are stated without preamble. Not \"here's an interesting fact\" — just the fact.\n\
+         - When the host is speculating, they say so: \"my read on this is\", \"I don't know for sure, but\", \"this part is less certain\".\n\
+         - The opening does not explain what the episode is about. It starts in the middle of something.\n\
+         - The ending does not summarize. It arrives somewhere. One final thought that feels like it was earned.\n\n\
+         THINGS THAT KILL THE VOICE (never do these):\n\
+         - \"In today's episode\", \"Today we're going to\", \"We'll explore\", \"Let's dive in\", \"Let's unpack\"\n\
+         - \"Fascinating\", \"Delve\", \"Landscape\", \"Ecosystem\", \"Nuanced\", \"Groundbreaking\", \"Game-changing\"\n\
+         - \"It's worth noting\", \"It's important to remember\", \"One thing is clear\"\n\
+         - \"That's a great question\" or any self-answering setup\n\
+         - Numbered or lettered lists spoken aloud: \"First... Second... Third\"\n\
+         - Announced transitions: \"Now let's turn to\", \"Moving on\", \"Next up\"\n\
+         - Summary at the end: \"So, to recap\", \"In conclusion\", \"To summarize\", \"We've covered a lot today\"\n\
+         - Calls to action that feel bolted on: \"Subscribe\", \"Leave a review\", \"Follow us\"\n\
+         - Any sentence that could appear in a blog post without changing a single word\n\n\
+         STRUCTURE:\n\
+         Follow the outline beats but do not announce them. The listener should not be able to identify \
+         where one section ends and another begins. The script flows. Transitions are earned by logic or feeling, \
+         not announced by language.\n\n\
+         Return only a JSON object with exactly these keys:\n\
+         - title: a concise, specific episode title — not a generic label, something a real show would use\n\
+         - summary: one sentence, written like a show note, not a pitch\n\
+         - hook: the cold open, written exactly as it will be spoken\n\
+         - intro: the entry beat that follows the cold open\n\
+         - conclusion: the landing and outro, written as spoken audio\n\
+         - script: the complete spoken script from first word to last — this is what gets read aloud, in full\n\
+         - voice_instructions: two or three sentences of direction for the TTS narrator on pacing, tone, and register\n\
+         - estimated_duration_minutes: integer\n\n\
+         The script field must be the full episode. Do not compress it. Do not write a synopsis. \
+         Write every word the host says.",
+        brief = brief,
+        outline = outline,
+        voice_style = voice_style,
+        target_duration = target_duration,
+        word_count = word_count
     )
 }
 
 fn build_editor_prompt(draft_json: &str, target_duration: u32, word_count: u32) -> String {
     format!(
-        "You are an audio editor cleaning up an AI-generated podcast script so it sounds human, specific, and ready for TTS.\n\nTarget length: about {target_duration} minutes spoken aloud, roughly {word_count} words.\n\nDraft JSON:\n{draft_json}\n\nReturn only a JSON object with exactly the same keys:\n- title\n- summary\n- hook\n- intro\n- conclusion\n- script\n- voice_instructions\n- estimated_duration_minutes\n\nEditing rules:\n- preserve factual claims from the draft; do not add new facts\n- remove AI cadence, generic throat-clearing, and essay transitions\n- make the first 20 seconds sharper\n- make the intro feel like a real entry into the topic, not a preamble\n- make the conclusion feel like a real landing, not a summary dump\n- expand short passages with natural connective tissue, examples, and spoken transitions when needed\n- keep the script speakable for TTS, with normal podcast pacing\n- keep estimated_duration_minutes as an integer"
+        "You are a script editor who specializes in making AI-generated podcast scripts sound like they were \
+         written by a real human host. You are not rewriting this — you are editing it. \
+         You know what AI sounds like, and you are going to remove every trace of it.\n\n\
+         Target: {target_duration} minutes spoken aloud, roughly {word_count} words.\n\n\
+         Draft JSON:\n{draft_json}\n\n\
+         Return only a JSON object with exactly the same keys:\n\
+         - title / summary / hook / intro / conclusion / script / voice_instructions / estimated_duration_minutes\n\n\
+         YOUR JOB:\n\n\
+         1. HUNT AND KILL AI TELLS\n\
+         Go sentence by sentence through the script. Remove or rewrite any sentence that:\n\
+         - starts with \"In today's episode\", \"Today we\", \"Welcome to\", \"Thanks for joining\"\n\
+         - uses: fascinating, delve, landscape, ecosystem, nuanced, groundbreaking, game-changing, \
+           multifaceted, pivotal, seamlessly, importantly, notably, crucially, ultimately, \
+           it's worth noting, it's important to remember, one thing is clear, needless to say\n\
+         - announces a transition: \"now let's turn to\", \"moving on\", \"next up\", \"let's shift\"\n\
+         - summarizes at the end: \"so to recap\", \"in conclusion\", \"to summarize\", \"we've covered\"\n\
+         - reads like an essay sentence: subject, predicate, object, period, repeat — flat cadence, no variation\n\
+         - uses passive constructions to avoid a point of view: \"it has been argued\", \"some might say\", \
+           \"there are those who believe\"\n\
+         - performs enthusiasm instead of feeling it: \"this is really exciting\", \"I love this topic\"\n\n\
+         2. CHECK THE OPENING\n\
+         The first 30 seconds must not explain what the episode is about. \
+         If it does, cut it and start at the first moment of substance. \
+         The cold open should drop the listener into something specific — a number, a scene, a claim — \
+         before they know what the episode is. Fix it if it does not do this.\n\n\
+         3. CHECK THE ENDING\n\
+         The conclusion must not summarize the episode. It must arrive somewhere — one final thought \
+         that feels earned. If it recaps, cut the recap and find the real final thought buried underneath it.\n\n\
+         4. CHECK FOR A POINT OF VIEW\n\
+         The host must have opinions. Find at least two places where the host states a position plainly — \
+         not \"it could be argued\" but \"I think\" or \"my read on this is\". \
+         If they do not exist, add them in places where the research supports a take.\n\n\
+         5. FIX FLAT RHYTHM\n\
+         Find any passage of three or more sentences that are all roughly the same length. Break them up. \
+         Add a very short sentence. Let a longer one breathe. The rhythm of a real voice is not metronomic.\n\n\
+         6. PRESERVE EVERYTHING FACTUAL\n\
+         Do not add new facts. Do not remove specific details, named examples, or numbers from the draft. \
+         Your job is to make the voice sound human, not to change what the host knows.\n\n\
+         7. KEEP IT SPEAKABLE\n\
+         Every sentence must be something a person could say naturally. \
+         Read it aloud in your head. If it requires a breath in a strange place, rewrite it.\n\n\
+         estimated_duration_minutes must remain an integer.",
+        draft_json = draft_json,
+        target_duration = target_duration,
+        word_count = word_count
     )
 }
 
