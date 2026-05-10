@@ -3,6 +3,14 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { AudioPlayer } from "@/components/audio-player"
 import { FeedbackDialog } from "@/components/feedback-dialog"
@@ -31,62 +39,43 @@ interface Podcast {
   imagePath?: string
 }
 
-const MOCK_PODCASTS: Podcast[] = [
-  {
-    id: "1",
-    title: "The Future of AI in Healthcare",
-    description: "Exploring how artificial intelligence is revolutionizing medical diagnosis and treatment",
-    duration: "32:45",
-    generatedAt: "2 hours ago",
-  },
-  {
-    id: "2",
-    title: "Understanding Quantum Computing",
-    description: "A deep dive into the principles and potential applications of quantum computers",
-    duration: "28:12",
-    generatedAt: "5 hours ago",
-  },
-  {
-    id: "3",
-    title: "Climate Change Solutions",
-    description: "Innovative approaches to combating global warming and environmental challenges",
-    duration: "35:20",
-    generatedAt: "1 day ago",
-  },
-  {
-    id: "4",
-    title: "The Psychology of Productivity",
-    description: "Understanding how our minds work and optimizing for peak performance",
-    duration: "41:15",
-    generatedAt: "1 day ago",
-  },
-  {
-    id: "5",
-    title: "Space Exploration in 2026",
-    description: "Latest developments in space technology and upcoming missions to Mars",
-    duration: "38:50",
-    generatedAt: "2 days ago",
-  },
-  {
-    id: "6",
-    title: "The Art of Storytelling",
-    description: "Mastering narrative techniques used by the world's greatest storytellers",
-    duration: "29:33",
-    generatedAt: "2 days ago",
-  },
-]
-
 export function HomeScreen() {
   const [currentPodcast, setCurrentPodcast] = useState<Podcast | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [showFeedback, setShowFeedback] = useState(false)
-  const [feedbackPodcast, setFeedbackPodcast] = useState<Podcast>(MOCK_PODCASTS[0])
-  const [podcasts, setPodcasts] = useState<Podcast[]>(MOCK_PODCASTS)
+  const [feedbackPodcast, setFeedbackPodcast] = useState<Podcast | null>(null)
+  const [podcasts, setPodcasts] = useState<Podcast[]>([])
   const [selectedThemes, setSelectedThemes] = useState<string[]>([])
   const [voiceType, setVoiceType] = useState("natural")
   const [defaultVoice, setDefaultVoice] = useState("alloy")
+  const [scriptModel, setScriptModel] = useState("gpt-5.5")
   const [isGenerating, setIsGenerating] = useState(false)
   const { toast } = useToast()
+
+  const describeError = (error: unknown) => {
+    if (error instanceof Error) {
+      return error.message
+    }
+
+    if (typeof error === "string") {
+      return error
+    }
+
+    if (typeof error === "object" && error !== null) {
+      const maybeMessage = "message" in error ? (error as { message?: unknown }).message : undefined
+      if (typeof maybeMessage === "string" && maybeMessage.trim().length > 0) {
+        return maybeMessage
+      }
+
+      try {
+        return JSON.stringify(error)
+      } catch {
+        return "OpenAI generation could not complete"
+      }
+    }
+
+    return "OpenAI generation could not complete"
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -102,13 +91,13 @@ export function HomeScreen() {
       setSelectedThemes(onboardingState.selectedThemes)
       setVoiceType(appSettings.voiceType)
       setDefaultVoice(appSettings.defaultVoice)
-      setPodcasts([
-        ...generatedPodcasts.map((podcast) => ({
+      setScriptModel(appSettings.scriptModel)
+      setPodcasts(
+        generatedPodcasts.map((podcast) => ({
           ...podcast,
           generatedAt: new Date(podcast.generatedAt).toLocaleString(),
         })),
-        ...MOCK_PODCASTS,
-      ])
+      )
     })()
 
     return () => {
@@ -136,6 +125,7 @@ export function HomeScreen() {
       const script = await generatePodcastScript({
         themes: resolvedThemes,
         voiceType,
+        scriptModel,
         durationMinutes: 4,
         researchContext,
       })
@@ -180,9 +170,10 @@ export function HomeScreen() {
         description: "OpenAI created the script and voice track.",
       })
     } catch (error) {
+      console.error("Podcast generation failed:", error)
       toast({
         title: "Generation failed",
-        description: error instanceof Error ? error.message : "OpenAI generation could not complete",
+        description: describeError(error),
         variant: "destructive",
       })
     } finally {
@@ -239,8 +230,10 @@ export function HomeScreen() {
           </Button>
           <Button
             variant="outline"
+            disabled={!currentPodcast}
             onClick={() => {
-              setFeedbackPodcast(currentPodcast ?? MOCK_PODCASTS[0])
+              if (!currentPodcast) return
+              setFeedbackPodcast(currentPodcast)
               setShowFeedback(true)
             }}
           >
@@ -264,69 +257,91 @@ export function HomeScreen() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredPodcasts.map((podcast) => (
-              <Card
-                key={podcast.id}
-                className="group overflow-hidden hover:shadow-lg transition-all hover:border-primary/50"
-              >
-                <div className="p-6 space-y-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-12 h-12 rounded bg-primary/10 border border-primary/20 overflow-hidden shrink-0">
-                        {podcast.imagePath ? (
-                          <img src={toImageUrl(podcast.imagePath)} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center">
-                            <Play className="w-5 h-5 text-primary" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs text-muted-foreground mb-1 font-medium uppercase tracking-wider">
-                          Episode #{podcast.id}
+          {filteredPodcasts.length === 0 ? (
+            <Empty className="min-h-[360px] border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Sparkles />
+                </EmptyMedia>
+                <EmptyTitle>{searchQuery ? "No episodes found" : "No episodes yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searchQuery
+                    ? "Try a different search term or generate a new episode."
+                    : "Generate your first podcast to add it to your library."}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button className="gap-2" onClick={handleGeneratePodcast} disabled={isGenerating}>
+                  <Sparkles className="w-4 h-4" />
+                  {isGenerating ? "Generating..." : "Generate New Podcast"}
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredPodcasts.map((podcast) => (
+                <Card
+                  key={podcast.id}
+                  className="group overflow-hidden hover:shadow-lg transition-all hover:border-primary/50"
+                >
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-12 h-12 rounded bg-primary/10 border border-primary/20 overflow-hidden shrink-0">
+                          {podcast.imagePath ? (
+                            <img src={toImageUrl(podcast.imagePath)} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Play className="w-5 h-5 text-primary" />
+                            </div>
+                          )}
                         </div>
-                        <h3 className="font-semibold text-base leading-tight line-clamp-2 text-balance">
-                          {podcast.title}
-                        </h3>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs text-muted-foreground mb-1 font-medium uppercase tracking-wider">
+                            Episode #{podcast.id}
+                          </div>
+                          <h3 className="font-semibold text-base leading-tight line-clamp-2 text-balance">
+                            {podcast.title}
+                          </h3>
+                        </div>
                       </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="shrink-0">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem>
+                            <BookmarkPlus className="w-4 h-4 mr-2" />
+                            Save for Later
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>Share</DropdownMenuItem>
+                          <DropdownMenuItem>Download</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="shrink-0">
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
-                          <BookmarkPlus className="w-4 h-4 mr-2" />
-                          Save for Later
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>Share</DropdownMenuItem>
-                        <DropdownMenuItem>Download</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+
+                    <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">{podcast.description}</p>
+
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2 border-t border-border">
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        {podcast.duration}
+                      </span>
+                      <span className="flex-1 text-right">{podcast.generatedAt}</span>
+                    </div>
+
+                    <Button className="w-full gap-2" variant="secondary" onClick={() => handlePlayPodcast(podcast)}>
+                      <Play className="w-4 h-4" />
+                      Play Episode
+                    </Button>
                   </div>
-
-                  <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">{podcast.description}</p>
-
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2 border-t border-border">
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5" />
-                      {podcast.duration}
-                    </span>
-                    <span className="flex-1 text-right">{podcast.generatedAt}</span>
-                  </div>
-
-                  <Button className="w-full gap-2" variant="secondary" onClick={() => handlePlayPodcast(podcast)}>
-                    <Play className="w-4 h-4" />
-                    Play Episode
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 
@@ -334,13 +349,15 @@ export function HomeScreen() {
       {currentPodcast && <AudioPlayer podcast={currentPodcast} />}
 
       {/* Feedback Dialog */}
-      <FeedbackDialog
-        open={showFeedback}
-        onOpenChange={setShowFeedback}
-        podcast={feedbackPodcast}
-        initialRating={null}
-        onFeedbackSubmitted={() => {}}
-      />
+      {feedbackPodcast && (
+        <FeedbackDialog
+          open={showFeedback}
+          onOpenChange={setShowFeedback}
+          podcast={feedbackPodcast}
+          initialRating={null}
+          onFeedbackSubmitted={() => {}}
+        />
+      )}
     </div>
   )
 }
