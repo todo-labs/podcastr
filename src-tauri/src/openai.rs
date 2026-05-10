@@ -2,7 +2,10 @@ use async_openai::{
     config::OpenAIConfig,
     types::{
         audio::{CreateSpeechRequestArgs, SpeechModel, SpeechResponseFormat, Voice},
-        responses::{CreateResponseArgs, ReasoningArgs, ReasoningEffort, Reasoning},
+        responses::{
+            CreateResponseArgs, ReasoningArgs, ReasoningEffort, Reasoning,
+            ResponseFormatJsonSchema, ResponseTextParam,
+        },
     },
     Client,
 };
@@ -382,6 +385,42 @@ fn build_editor_prompt(draft_json: &str, target_duration: u32, word_count: u32) 
     )
 }
 
+fn script_response_format() -> ResponseTextParam {
+    ResponseFormatJsonSchema {
+        description: Some(
+            "Structured output for a generated podcast episode script and narration guidance."
+                .to_string(),
+        ),
+        name: "podcastr_podcast_script".to_string(),
+        schema: Some(serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "title",
+                "summary",
+                "hook",
+                "intro",
+                "conclusion",
+                "script",
+                "voice_instructions",
+                "estimated_duration_minutes"
+            ],
+            "properties": {
+                "title": { "type": "string" },
+                "summary": { "type": "string" },
+                "hook": { "type": "string" },
+                "intro": { "type": "string" },
+                "conclusion": { "type": "string" },
+                "script": { "type": "string" },
+                "voice_instructions": { "type": "string" },
+                "estimated_duration_minutes": { "type": "integer", "minimum": 1 }
+            }
+        })),
+        strict: Some(true),
+    }
+    .into()
+}
+
 fn normalize_voice(voice: Option<String>) -> Voice {
     match voice.as_deref() {
         Some("ash") => Voice::Ash,
@@ -444,12 +483,20 @@ async fn create_response_text(
     prompt: String,
     max_output_tokens: u32,
     reasoning_effort: ReasoningEffort,
+    structured_output: bool,
 ) -> Result<String, String> {
-    let request = CreateResponseArgs::default()
+    let mut request_builder = CreateResponseArgs::default();
+    request_builder
         .model(model)
         .input(prompt)
         .max_output_tokens(max_output_tokens)
-        .reasoning(reasoning_settings(reasoning_effort)?)
+        .reasoning(reasoning_settings(reasoning_effort)?);
+
+    if structured_output {
+        request_builder.text(script_response_format());
+    }
+
+    let request = request_builder
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -497,52 +544,7 @@ fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String
         (Some(start), Some(end)) if start <= end => &json_text[start..=end],
         _ => json_text,
     };
-    let parsed: Value = serde_json::from_str(json_text).map_err(|error| error.to_string())?;
-    let title = parsed
-        .get("title")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing title in OpenAI script response".to_string())?;
-    let summary = parsed
-        .get("summary")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing summary in OpenAI script response".to_string())?;
-    let hook = parsed
-        .get("hook")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing hook in OpenAI script response".to_string())?;
-    let intro = parsed
-        .get("intro")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing intro in OpenAI script response".to_string())?;
-    let conclusion = parsed
-        .get("conclusion")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing conclusion in OpenAI script response".to_string())?;
-    let script = parsed
-        .get("script")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing script in OpenAI script response".to_string())?;
-    let voice_instructions = parsed
-        .get("voice_instructions")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Missing voice_instructions in OpenAI script response".to_string())?;
-    let estimated_duration_minutes = parsed
-        .get("estimated_duration_minutes")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| {
-            "Missing estimated_duration_minutes in OpenAI script response".to_string()
-        })?;
-
-    Ok(GeneratePodcastScriptOutput {
-        title: title.to_string(),
-        summary: summary.to_string(),
-        hook: hook.to_string(),
-        intro: intro.to_string(),
-        conclusion: conclusion.to_string(),
-        script: script.to_string(),
-        voice_instructions: voice_instructions.to_string(),
-        estimated_duration_minutes: estimated_duration_minutes as u32,
-    })
+    serde_json::from_str(json_text).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -563,6 +565,7 @@ pub async fn generate_podcast_script(
         build_brief_prompt(&input, target_duration, word_count),
         1600u32,
         ReasoningEffort::Medium,
+        false,
     )
     .await?;
 
@@ -572,6 +575,7 @@ pub async fn generate_podcast_script(
         build_outline_prompt(&brief, target_duration),
         1800u32,
         ReasoningEffort::Medium,
+        false,
     )
     .await?;
 
@@ -581,6 +585,7 @@ pub async fn generate_podcast_script(
         build_draft_prompt(&input, &brief, &outline, target_duration, word_count),
         6000u32,
         ReasoningEffort::High,
+        true,
     )
     .await?;
 
@@ -590,6 +595,7 @@ pub async fn generate_podcast_script(
         build_editor_prompt(&draft_json, target_duration, word_count),
         6000u32,
         ReasoningEffort::High,
+        true,
     )
     .await?;
 
