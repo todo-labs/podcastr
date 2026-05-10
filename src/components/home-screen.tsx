@@ -1,36 +1,23 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
 import { AudioPlayer } from "@/components/audio-player"
 import { FeedbackDialog } from "@/components/feedback-dialog"
 import {
   CheckCircle2,
-  Clock,
   FileText,
   Image,
   Loader2,
   Mic,
   MoreVertical,
   Play,
+  Pause,
   Save,
   Search,
   Settings,
   Sparkles,
-  TrendingUp,
-  BookmarkPlus,
 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Link } from "@/lib/router"
@@ -51,6 +38,7 @@ import {
   toImageUrl,
 } from "@/lib/openai"
 import { formatResearchContext, searchEpisodeResearch } from "@/lib/exa"
+import { cn } from "@/lib/utils"
 
 type Podcast = GeneratedPodcast
 
@@ -64,11 +52,177 @@ const GENERATION_STEPS = [
 
 type GenerationStage = (typeof GENERATION_STEPS)[number]["key"] | "idle"
 
+/* ─── Waveform bars — the visual language of this app ───────────── */
+function WaveformBars({
+  isAnimating,
+  bars = 48,
+  height = 48,
+  className,
+}: {
+  isAnimating: boolean
+  bars?: number
+  height?: number
+  className?: string
+}) {
+  const heights = useMemo(() => {
+    return Array.from({ length: bars }, (_, i) => {
+      const h =
+        Math.sin(i * 0.38) * 0.35 +
+        Math.sin(i * 0.85) * 0.25 +
+        Math.cos(i * 0.22) * 0.20 +
+        0.42
+      return Math.max(0.06, Math.min(1, Math.abs(h)))
+    })
+  }, [bars])
+
+  return (
+    <div
+      className={cn("flex items-center gap-[2px]", className)}
+      style={{ height }}
+      aria-hidden
+    >
+      {heights.map((h, i) => (
+        <div
+          key={i}
+          className="flex-1 max-w-[4px] rounded-full bg-primary"
+          style={{
+            height: `${h * 100}%`,
+            transformOrigin: "center",
+            opacity: isAnimating ? 0.9 : 0.35,
+            animation: isAnimating
+              ? `waveBar ${500 + ((i * 73) % 500)}ms ease-in-out ${(i * 41) % 600}ms infinite alternate`
+              : "none",
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/* ─── Mini playing indicator — 3 bars on episode rows ──────────── */
+function PlayingIndicator({ isPlaying }: { isPlaying: boolean }) {
+  return (
+    <div className="flex items-center gap-[2px] w-4 h-4" aria-hidden>
+      {[0.65, 1, 0.5].map((h, i) => (
+        <div
+          key={i}
+          className="w-[3px] rounded-full bg-primary"
+          style={{
+            height: `${h * 100}%`,
+            transformOrigin: "center",
+            animation: isPlaying
+              ? `waveBar ${450 + i * 150}ms ease-in-out ${i * 120}ms infinite alternate`
+              : "none",
+            opacity: isPlaying ? 1 : 0.4,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/* ─── Episode row — broadcast schedule entry ────────────────────── */
+function EpisodeRow({
+  podcast,
+  index,
+  isActive,
+  onPlay,
+}: {
+  podcast: Podcast
+  index: number
+  isActive: boolean
+  onPlay: () => void
+}) {
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-muted/50",
+        isActive && "bg-primary/8",
+      )}
+    >
+      {/* Episode number */}
+      <span className="text-xs text-muted-foreground tabular-nums w-5 shrink-0 text-right">
+        {String(index + 1).padStart(2, "0")}
+      </span>
+
+      {/* Artwork */}
+      <div className="w-9 h-9 rounded-sm overflow-hidden bg-muted shrink-0 border border-border">
+        {podcast.imagePath ? (
+          <img src={toImageUrl(podcast.imagePath)} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Mic className="w-3.5 h-3.5 text-muted-foreground" />
+          </div>
+        )}
+      </div>
+
+      {/* Title + timestamp */}
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <p className={cn("text-sm leading-tight truncate", isActive ? "text-primary" : "text-foreground")}>
+          {podcast.title}
+        </p>
+        <p className="text-xs text-muted-foreground">{podcast.generatedAt}</p>
+      </div>
+
+      {/* Duration */}
+      <span className="text-xs tabular-nums text-muted-foreground shrink-0">{podcast.duration}</span>
+
+      {/* Actions */}
+      <div className="flex items-center gap-0.5 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={onPlay}
+          aria-label={isActive ? "Now playing" : "Play episode"}
+        >
+          {isActive ? (
+            <PlayingIndicator isPlaying />
+          ) : (
+            <Play className="w-3.5 h-3.5 fill-current opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+        </Button>
+
+        <Link href={`/episode/${podcast.id}`}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+          >
+            <FileText className="w-3.5 h-3.5" />
+          </Button>
+        </Link>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+            >
+              <MoreVertical className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="text-xs">
+            <DropdownMenuItem asChild>
+              <Link href={`/episode/${podcast.id}`}>
+                <FileText className="w-3.5 h-3.5 mr-2" />
+                View episode
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem>Download</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Home screen ────────────────────────────────────────────────── */
 export function HomeScreen() {
   const [currentPodcast, setCurrentPodcast] = useState<Podcast | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
-  const [showFeedback, setShowFeedback] = useState(false)
-  const [feedbackPodcast, setFeedbackPodcast] = useState<Podcast | null>(null)
   const [podcasts, setPodcasts] = useState<Podcast[]>([])
   const [selectedThemes, setSelectedThemes] = useState<string[]>([])
   const [voiceType, setVoiceType] = useState("natural")
@@ -79,33 +233,18 @@ export function HomeScreen() {
   const { toast } = useToast()
 
   const describeError = (error: unknown) => {
-    if (error instanceof Error) {
-      return error.message
-    }
-
-    if (typeof error === "string") {
-      return error
-    }
-
+    if (error instanceof Error) return error.message
+    if (typeof error === "string") return error
     if (typeof error === "object" && error !== null) {
       const maybeMessage = "message" in error ? (error as { message?: unknown }).message : undefined
-      if (typeof maybeMessage === "string" && maybeMessage.trim().length > 0) {
-        return maybeMessage
-      }
-
-      try {
-        return JSON.stringify(error)
-      } catch {
-        return "OpenAI generation could not complete"
-      }
+      if (typeof maybeMessage === "string" && maybeMessage.trim().length > 0) return maybeMessage
+      try { return JSON.stringify(error) } catch { return "OpenAI generation could not complete" }
     }
-
     return "OpenAI generation could not complete"
   }
 
   useEffect(() => {
     let cancelled = false
-
     ;(async () => {
       const [onboardingState, appSettings, generatedPodcasts] = await Promise.all([
         getOnboardingState(),
@@ -113,7 +252,6 @@ export function HomeScreen() {
         getGeneratedPodcasts(),
       ])
       if (cancelled) return
-
       setSelectedThemes(onboardingState.selectedThemes)
       setVoiceType(appSettings.voiceType)
       setDefaultVoice(appSettings.defaultVoice)
@@ -125,10 +263,7 @@ export function HomeScreen() {
         })),
       )
     })()
-
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [])
 
   const handlePlayPodcast = (podcast: Podcast) => {
@@ -136,10 +271,7 @@ export function HomeScreen() {
   }
 
   const handleGeneratePodcast = async () => {
-    if (isGenerating) {
-      return
-    }
-
+    if (isGenerating) return
     setIsGenerating(true)
     setGenerationStage("searching")
 
@@ -151,12 +283,7 @@ export function HomeScreen() {
       setGenerationStage("planning")
       const researchContext = formatResearchContext(research)
       setGenerationStage("writing")
-      const script = await generatePodcastScript({
-        themes: resolvedThemes,
-        voiceType,
-        scriptModel,
-        researchContext,
-      })
+      const script = await generatePodcastScript({ themes: resolvedThemes, voiceType, scriptModel, researchContext })
 
       setGenerationStage("assets")
       const [audio, graphic] = await Promise.all([
@@ -165,11 +292,7 @@ export function HomeScreen() {
           voice: defaultVoice || mapVoiceTypeToOpenAIVoice(voiceType),
           instructions: script.voiceInstructions,
         }),
-        generateEpisodeGraphic({
-          title: script.title,
-          summary: script.summary,
-          themes: resolvedThemes,
-        }),
+        generateEpisodeGraphic({ title: script.title, summary: script.summary, themes: resolvedThemes }),
       ])
 
       const episode: Podcast = {
@@ -202,36 +325,26 @@ export function HomeScreen() {
 
       setPodcasts((current) => [episode, ...current])
       setCurrentPodcast(episode)
-      toast({
-        title: "Podcast generated",
-        description: "OpenAI created the script and voice track.",
-      })
+      toast({ title: "Episode ready", description: "Your briefing has been generated." })
     } catch (error) {
       console.error("Podcast generation failed:", error)
-      toast({
-        title: "Generation failed",
-        description: describeError(error),
-        variant: "destructive",
-      })
+      toast({ title: "Generation failed", description: describeError(error), variant: "destructive" })
     } finally {
       setGenerationStage("idle")
       setIsGenerating(false)
     }
   }
 
-  const generationProgress = generationStage === "idle"
-    ? 0
-    : GENERATION_STEPS.find((step) => step.key === generationStage)?.progress ?? 0
-
-  const currentGenerationLabel = generationStage === "idle"
-    ? "Ready to generate"
-    : GENERATION_STEPS.find((step) => step.key === generationStage)?.label ?? "Generating"
+  const currentGenerationLabel =
+    generationStage === "idle"
+      ? "Ready"
+      : (GENERATION_STEPS.find((step) => step.key === generationStage)?.label ?? "Generating")
 
   const completedSteps = GENERATION_STEPS.filter(
     (step) =>
       generationStage !== "idle" &&
-      GENERATION_STEPS.findIndex((candidate) => candidate.key === step.key) <
-        GENERATION_STEPS.findIndex((candidate) => candidate.key === generationStage),
+      GENERATION_STEPS.findIndex((c) => c.key === step.key) <
+        GENERATION_STEPS.findIndex((c) => c.key === generationStage),
   )
 
   const filteredPodcasts = podcasts.filter((podcast) =>
@@ -239,223 +352,177 @@ export function HomeScreen() {
   )
 
   return (
-    <div className="min-h-screen bg-background flex flex-col pb-32">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-primary-foreground" />
-              </div>
-              <span className="font-semibold text-lg tracking-tight">Podcastr</span>
-            </div>
-
-            <div className="flex-1 max-w-xl">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  type="search"
-                  placeholder="Search podcasts..."
-                  className="pl-10"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+    <div className="min-h-screen bg-background flex flex-col pb-28">
+      {/* Header — broadcast deck nameplate */}
+      <header className="sticky top-0 z-40 border-b border-border bg-background">
+        <div className="container mx-auto px-5 py-3 flex items-center justify-between gap-4">
+          {/* Logo — waveform mark + name */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-end gap-[2px] h-4" aria-hidden>
+              {[0.4, 0.7, 1, 0.8, 0.55, 0.35].map((h, i) => (
+                <div
+                  key={i}
+                  className="w-[2px] rounded-full bg-primary"
+                  style={{ height: `${h * 100}%` }}
                 />
-              </div>
+              ))}
             </div>
-
-            <Link href="/settings">
-              <Button variant="ghost" size="icon">
-                <Settings className="w-5 h-5" />
-              </Button>
-            </Link>
+            <span className="text-xs tracking-[0.18em] uppercase text-foreground">PODCASTR</span>
           </div>
+
+          {/* Search */}
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search library..."
+              className="pl-8 h-7 text-xs bg-muted border-0 focus-visible:ring-1 focus-visible:ring-primary/50"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <Link href="/settings">
+            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+              <Settings className="w-3.5 h-3.5" />
+            </Button>
+          </Link>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 container mx-auto px-4 py-8 space-y-8">
-        {isGenerating && (
-          <div className="rounded-xl border bg-card p-4 space-y-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                  <p className="font-medium">{currentGenerationLabel}</p>
-                </div>
-                <p className="text-sm text-muted-foreground">Building the episode before it is saved to your library.</p>
-              </div>
-              <Badge variant="secondary">{Math.max(1, generationProgress)}%</Badge>
+      <main className="flex-1 container mx-auto px-5 py-6 space-y-6">
+        {/* ── Generate section — the broadcast booth ── */}
+        <div className="border border-border rounded-sm overflow-hidden">
+          {/* Studio status bar */}
+          <div className="px-5 py-2.5 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  isGenerating
+                    ? "bg-destructive"
+                    : "bg-muted-foreground",
+                )}
+                style={isGenerating ? { animation: "signalBlink 1s ease-in-out infinite" } : undefined}
+              />
+              <span className="text-[10px] tracking-[0.2em] uppercase text-muted-foreground">
+                {isGenerating ? "On Air" : "Studio"}
+              </span>
             </div>
-            <Progress value={generationProgress} />
-            <div className="flex flex-wrap gap-2">
+            {isGenerating && (
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {GENERATION_STEPS.find((s) => s.key === generationStage)?.progress ?? 0}%
+              </span>
+            )}
+          </div>
+
+          {/* Waveform + generate action */}
+          <div className="px-5 py-6 flex items-center gap-8">
+            <div className="flex-1 min-w-0 space-y-4">
+              <WaveformBars isAnimating={isGenerating} bars={52} height={44} />
+              <div className="space-y-1">
+                <p className="text-sm text-foreground">
+                  {isGenerating ? currentGenerationLabel : "Generate episode"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {isGenerating
+                    ? "AI is researching and producing your briefing..."
+                    : "AI researches, writes, and voices your next episode"}
+                </p>
+              </div>
+            </div>
+
+            <Button
+              onClick={handleGeneratePodcast}
+              disabled={isGenerating}
+              className="shrink-0 gap-2 h-9 px-5 text-xs tracking-wide"
+            >
+              {isGenerating ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              {isGenerating ? "Generating" : "Generate"}
+            </Button>
+          </div>
+
+          {/* Generation step pipeline */}
+          {isGenerating && (
+            <div className="border-t border-border px-5 py-3 flex flex-wrap gap-x-5 gap-y-2">
               {GENERATION_STEPS.map((step) => {
                 const isComplete = completedSteps.some((item) => item.key === step.key)
                 const isActive = generationStage === step.key
-                const Icon = step.icon
 
                 return (
-                  <Badge
+                  <div
                     key={step.key}
-                    variant={isActive ? "default" : isComplete ? "secondary" : "outline"}
-                    className="gap-1.5"
+                    className={cn(
+                      "flex items-center gap-1.5 text-[10px] tracking-wide",
+                      isActive
+                        ? "text-foreground"
+                        : isComplete
+                          ? "text-primary"
+                          : "text-muted-foreground/50",
+                    )}
                   >
                     {isComplete ? (
                       <CheckCircle2 className="w-3 h-3" />
                     ) : isActive ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
                     ) : (
-                      <Icon className="w-3 h-3" />
+                      <div className="w-3 h-3 rounded-full border border-current" />
                     )}
                     {step.label}
-                  </Badge>
+                  </div>
                 )
               })}
             </div>
-          </div>
-        )}
-
-        {/* Quick Actions */}
-        <div className="flex items-center gap-3">
-          <Button className="gap-2" onClick={handleGeneratePodcast} disabled={isGenerating}>
-            <Sparkles className="w-4 h-4" />
-            {isGenerating ? currentGenerationLabel : "Generate New Podcast"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!currentPodcast}
-            onClick={() => {
-              if (!currentPodcast) return
-              setFeedbackPodcast(currentPodcast)
-              setShowFeedback(true)
-            }}
-          >
-            Provide Feedback
-          </Button>
+          )}
         </div>
 
-        {/* Podcast Grid */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold tracking-tight">Your Library</h2>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" className="gap-2">
-                <TrendingUp className="w-4 h-4" />
-                Trending
-              </Button>
-              <Button variant="ghost" size="sm" className="gap-2">
-                <Clock className="w-4 h-4" />
-                Recent
-              </Button>
-            </div>
+        {/* ── Library ── */}
+        <div className="space-y-3">
+          {/* Library header */}
+          <div className="flex items-center gap-3 px-1">
+            <span className="text-[10px] tracking-[0.2em] uppercase text-muted-foreground">Library</span>
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-[10px] text-muted-foreground tabular-nums">{filteredPodcasts.length} episodes</span>
           </div>
 
           {filteredPodcasts.length === 0 ? (
-            <Empty className="min-h-[360px] border">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Sparkles />
-                </EmptyMedia>
-                <EmptyTitle>{searchQuery ? "No episodes found" : "No episodes yet"}</EmptyTitle>
-                <EmptyDescription>
-                  {searchQuery
-                    ? "Try a different search term or generate a new episode."
-                    : "Generate your first podcast to add it to your library."}
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button className="gap-2" onClick={handleGeneratePodcast} disabled={isGenerating}>
-                  <Sparkles className="w-4 h-4" />
-                  {isGenerating ? "Generating..." : "Generate New Podcast"}
-                </Button>
-              </EmptyContent>
-            </Empty>
+            /* Empty state */
+            <div className="border border-border rounded-sm py-16 px-6 flex flex-col items-center gap-5">
+              <WaveformBars isAnimating={false} bars={24} height={32} />
+              <div className="text-center space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  {searchQuery ? "No episodes match your search" : "No episodes yet"}
+                </p>
+                {!searchQuery && (
+                  <p className="text-xs text-muted-foreground/60">
+                    Generate your first episode above
+                  </p>
+                )}
+              </div>
+            </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredPodcasts.map((podcast) => (
-                <Card
+            /* Episode list — broadcast schedule */
+            <div className="border border-border rounded-sm overflow-hidden divide-y divide-border">
+              {filteredPodcasts.map((podcast, index) => (
+                <EpisodeRow
                   key={podcast.id}
-                  className="group overflow-hidden hover:shadow-lg transition-all hover:border-primary/50"
-                >
-                  <div className="p-6 space-y-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="w-12 h-12 rounded bg-primary/10 border border-primary/20 overflow-hidden shrink-0">
-                          {podcast.imagePath ? (
-                            <img src={toImageUrl(podcast.imagePath)} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center">
-                              <Play className="w-5 h-5 text-primary" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs text-muted-foreground mb-1 font-medium uppercase tracking-wider">
-                            Episode #{podcast.id}
-                          </div>
-                          <h3 className="font-semibold text-base leading-tight line-clamp-2 text-balance">
-                            {podcast.title}
-                          </h3>
-                        </div>
-                      </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="shrink-0">
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
-                            <BookmarkPlus className="w-4 h-4 mr-2" />
-                            Save for Later
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>Download</DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-
-                    <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">{podcast.description}</p>
-
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2 border-t border-border">
-                      <span className="flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5" />
-                        {podcast.duration}
-                      </span>
-                      <span className="flex-1 text-right">{podcast.generatedAt}</span>
-                    </div>
-
-                    <Button className="w-full gap-2" variant="secondary" onClick={() => handlePlayPodcast(podcast)}>
-                      <Play className="w-4 h-4" />
-                      Play Episode
-                    </Button>
-                    <Button asChild variant="outline" className="w-full gap-2">
-                      <Link href={`/episode/${podcast.id}`}>
-                        <FileText className="w-4 h-4" />
-                        Open Episode
-                      </Link>
-                    </Button>
-                  </div>
-                </Card>
+                  podcast={podcast}
+                  index={index}
+                  isActive={currentPodcast?.id === podcast.id}
+                  onPlay={() => handlePlayPodcast(podcast)}
+                />
               ))}
             </div>
           )}
         </div>
       </main>
 
-      {/* Audio Player */}
+      {/* Audio player */}
       {currentPodcast && <AudioPlayer podcast={currentPodcast} />}
-
-      {/* Feedback Dialog */}
-      {feedbackPodcast && (
-        <FeedbackDialog
-          open={showFeedback}
-          onOpenChange={setShowFeedback}
-          podcast={feedbackPodcast}
-          initialRating={null}
-          onFeedbackSubmitted={() => {}}
-        />
-      )}
     </div>
   )
 }

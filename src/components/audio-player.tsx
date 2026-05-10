@@ -1,8 +1,7 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { Slider } from "@/components/ui/slider"
 import {
   Play,
   Pause,
@@ -10,15 +9,16 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  Repeat,
-  Shuffle,
   ThumbsUp,
   ThumbsDown,
   X,
+  Mic,
 } from "lucide-react"
 import { FeedbackDialog } from "./feedback-dialog"
 import { getPodcastFeedback } from "@/lib/persistence"
 import { convertFileSrc } from "@tauri-apps/api/core"
+import { cn } from "@/lib/utils"
+import { toImageUrl } from "@/lib/openai"
 
 interface Podcast {
   id: string
@@ -33,17 +33,119 @@ interface Podcast {
 
 interface AudioPlayerProps {
   podcast: Podcast
-  onProgress?: (progress: {
-    currentTime: number
-    duration: number
-    isPlaying: boolean
-  }) => void
+  onProgress?: (progress: { currentTime: number; duration: number; isPlaying: boolean }) => void
 }
 
+/* ─── Waveform seek bar ─────────────────────────────────────────── */
+function WaveformSeek({
+  value,
+  max,
+  isPlaying,
+  onChange,
+}: {
+  value: number
+  max: number
+  isPlaying: boolean
+  onChange: (val: number) => void
+}) {
+  const bars = 64
+  const progress = value / Math.max(1, max)
+  const progressIndex = Math.floor(progress * bars)
+
+  const heights = useMemo(
+    () =>
+      Array.from({ length: bars }, (_, i) => {
+        const h =
+          0.45 +
+          Math.sin(i * 0.31) * 0.28 +
+          Math.cos(i * 0.71) * 0.18 +
+          Math.sin(i * 1.15) * 0.10
+        return Math.max(0.08, Math.min(1, h))
+      }),
+    [],
+  )
+
+  return (
+    <div className="relative group">
+      <div className="flex items-center gap-[2px] h-8 cursor-pointer select-none">
+        {heights.map((h, i) => {
+          const isPast = i < progressIndex
+          const isNear = Math.abs(i - progressIndex) < 3
+
+          return (
+            <div
+              key={i}
+              className="flex-1 rounded-full transition-colors"
+              style={{
+                height: `${h * 100}%`,
+                backgroundColor: isPast
+                  ? "oklch(0.73 0.17 67)"
+                  : isNear
+                    ? "oklch(0.73 0.17 67 / 0.4)"
+                    : "oklch(0.22 0.008 52)",
+                transformOrigin: "center",
+                animation:
+                  isPlaying && isPast
+                    ? `waveBar ${500 + ((i * 73) % 400)}ms ease-in-out ${(i * 41) % 400}ms infinite alternate`
+                    : "none",
+              }}
+            />
+          )
+        })}
+      </div>
+      {/* Invisible range input for accessibility and interaction */}
+      <input
+        type="range"
+        min={0}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="absolute inset-0 w-full opacity-0 cursor-pointer"
+        aria-label="Seek"
+      />
+    </div>
+  )
+}
+
+/* ─── Volume bar ────────────────────────────────────────────────── */
+function VolumeBar({ value, onChange }: { value: number; onChange: (val: number) => void }) {
+  const bars = 16
+  const filled = Math.round((value / 100) * bars)
+
+  return (
+    <div className="relative group flex items-center">
+      <div className="flex items-center gap-[2px] h-4 w-16 cursor-pointer">
+        {Array.from({ length: bars }, (_, i) => (
+          <div
+            key={i}
+            className="flex-1 rounded-full transition-colors"
+            style={{
+              height: `${30 + (i / bars) * 70}%`,
+              backgroundColor: i < filled ? "oklch(0.73 0.17 67)" : "oklch(0.22 0.008 52)",
+            }}
+          />
+        ))}
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="absolute inset-0 w-full opacity-0 cursor-pointer"
+        aria-label="Volume"
+      />
+    </div>
+  )
+}
+
+/* ─── Audio player ──────────────────────────────────────────────── */
 export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(180) // Mock duration in seconds
+  const [duration, setDuration] = useState(180)
   const [volume, setVolume] = useState(75)
   const [isMuted, setIsMuted] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
@@ -57,7 +159,6 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
 
   useEffect(() => {
     let cancelled = false
-
     ;(async () => {
       const thisPodcastFeedback = await getPodcastFeedback(podcast.id)
       if (!cancelled) {
@@ -70,25 +171,17 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
         )
       }
     })()
-
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [podcast.id])
 
   useEffect(() => {
     setCurrentTime(0)
     setIsPlaying(false)
-
-    if (!hasAudioSource) {
-      setDuration(180)
-    }
+    if (!hasAudioSource) setDuration(180)
   }, [podcast.id, hasAudioSource])
 
   useEffect(() => {
-    if (!hasAudioSource) {
-      return
-    }
+    if (!hasAudioSource) return
 
     const audio = new Audio(audioSource)
     audioRef.current = audio
@@ -97,30 +190,20 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
     audio.muted = isMuted
 
     const handleLoadedMetadata = () => {
-      setDuration(Number.isFinite(audio.duration) && audio.duration > 0 ? Math.max(1, Math.round(audio.duration)) : 180)
+      setDuration(
+        Number.isFinite(audio.duration) && audio.duration > 0
+          ? Math.max(1, Math.round(audio.duration))
+          : 180,
+      )
     }
-
-    const handleTimeUpdate = () => {
-      setCurrentTime(Math.floor(audio.currentTime))
-    }
-
-    const handleEnded = () => {
-      setIsPlaying(false)
-      setCurrentTime(0)
-    }
-
+    const handleTimeUpdate = () => setCurrentTime(Math.floor(audio.currentTime))
+    const handleEnded = () => { setIsPlaying(false); setCurrentTime(0) }
     const handleVolumeChange = () => {
       setVolume(Math.round(audio.volume * 100))
       setIsMuted(audio.muted || audio.volume === 0)
     }
-
-    const handlePlay = () => {
-      setIsPlaying(true)
-    }
-
-    const handlePause = () => {
-      setIsPlaying(false)
-    }
+    const handlePlay = () => setIsPlaying(true)
+    const handlePause = () => setIsPlaying(false)
 
     audio.addEventListener("loadedmetadata", handleLoadedMetadata)
     audio.addEventListener("timeupdate", handleTimeUpdate)
@@ -137,9 +220,7 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
       audio.removeEventListener("volumechange", handleVolumeChange)
       audio.removeEventListener("play", handlePlay)
       audio.removeEventListener("pause", handlePause)
-      if (audioRef.current === audio) {
-        audioRef.current = null
-      }
+      if (audioRef.current === audio) audioRef.current = null
     }
   }, [audioSource, hasAudioSource])
 
@@ -151,39 +232,22 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
   }, [volume, isMuted])
 
   useEffect(() => {
-    onProgress?.({
-      currentTime,
-      duration,
-      isPlaying,
-    })
+    onProgress?.({ currentTime, duration, isPlaying })
   }, [currentTime, duration, isPlaying, onProgress])
 
   useEffect(() => {
-    if (hasAudioSource) {
-      return
-    }
-
+    if (hasAudioSource) return
     if (isPlaying) {
       intervalRef.current = setInterval(() => {
         setCurrentTime((prev) => {
-          if (prev >= duration) {
-            setIsPlaying(false)
-            return 0
-          }
+          if (prev >= duration) { setIsPlaying(false); return 0 }
           return prev + 1
         })
       }, 1000)
     } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current)
     }
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [hasAudioSource, isPlaying, duration])
 
   const formatTime = (seconds: number) => {
@@ -195,47 +259,36 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
   const handlePlayPause = async () => {
     if (audioRef.current) {
       if (audioRef.current.paused) {
-        try {
-          await audioRef.current.play()
-        } catch {
-          setIsPlaying(false)
-        }
+        try { await audioRef.current.play() } catch { setIsPlaying(false) }
       } else {
         audioRef.current.pause()
       }
-
       return
     }
-
     setIsPlaying(!isPlaying)
   }
 
-  const handleSeek = (value: number[]) => {
+  const handleSeek = (val: number) => {
     if (audioRef.current) {
-      audioRef.current.currentTime = value[0]
-      setCurrentTime(value[0])
+      audioRef.current.currentTime = val
+      setCurrentTime(val)
       return
     }
-
-    setCurrentTime(value[0])
+    setCurrentTime(val)
   }
 
-  const handleVolumeChange = (value: number[]) => {
-    setVolume(value[0])
+  const handleVolumeChange = (val: number) => {
+    setVolume(val)
     setIsMuted(false)
-
     if (audioRef.current) {
-      audioRef.current.volume = value[0] / 100
+      audioRef.current.volume = val / 100
       audioRef.current.muted = false
     }
   }
 
   const toggleMute = () => {
     setIsMuted(!isMuted)
-
-    if (audioRef.current) {
-      audioRef.current.muted = !isMuted
-    }
+    if (audioRef.current) audioRef.current.muted = !isMuted
   }
 
   const handleSkipForward = () => {
@@ -243,7 +296,6 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
       audioRef.current.currentTime = Math.min(audioRef.current.currentTime + 15, duration)
       return
     }
-
     setCurrentTime(Math.min(currentTime + 15, duration))
   }
 
@@ -252,7 +304,6 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
       audioRef.current.currentTime = Math.max(audioRef.current.currentTime - 15, 0)
       return
     }
-
     setCurrentTime(Math.max(currentTime - 15, 0))
   }
 
@@ -261,140 +312,136 @@ export function AudioPlayer({ podcast, onProgress }: AudioPlayerProps) {
     setFeedbackOpen(true)
   }
 
+  const coverSrc = podcast.imagePath
+    ? convertFileSrc(podcast.imagePath)
+    : podcast.imageUrl || null
+
+  /* ── Minimized bar ── */
   if (isMinimized) {
     return (
       <div className="fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
-        <div className="container mx-auto px-4 py-2">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <img
-                src={podcast.imagePath ? convertFileSrc(podcast.imagePath) : podcast.imageUrl || "/placeholder.svg"}
-                alt={podcast.title}
-                className="w-12 h-12 rounded object-cover"
-              />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold truncate">{podcast.title}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatTime(currentTime)} / {formatTime(duration)}
-                </p>
-              </div>
+        <div className="container mx-auto px-5 py-2.5 flex items-center gap-4">
+          {coverSrc ? (
+            <img src={coverSrc} alt={podcast.title} className="w-8 h-8 rounded-sm object-cover shrink-0 border border-border" />
+          ) : (
+            <div className="w-8 h-8 rounded-sm bg-muted border border-border flex items-center justify-center shrink-0">
+              <Mic className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
-
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={handlePlayPause}>
-                {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => setIsMinimized(false)}>
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-          </div>
+          )}
+          <p className="flex-1 text-xs truncate">{podcast.title}</p>
+          <span className="text-xs tabular-nums text-muted-foreground shrink-0">
+            {formatTime(currentTime)} / {formatTime(duration)}
+          </span>
+          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={handlePlayPause}>
+            {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setIsMinimized(false)}>
+            <X className="w-3.5 h-3.5" />
+          </Button>
         </div>
       </div>
     )
   }
 
+  /* ── Full player ── */
   return (
     <>
-      <div className="fixed bottom-0 left-0 right-0 bg-card border-t border-border shadow-2xl z-50">
-        <div className="container mx-auto px-4 py-6">
-          {/* Progress Bar */}
-          <div className="space-y-2 mb-6">
-            <Slider
-              value={[currentTime]}
-              max={duration}
-              step={1}
-              onValueChange={handleSeek}
-              className="cursor-pointer"
-            />
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(duration)}</span>
+      <div className="fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
+        {/* Waveform seek bar — the signature element */}
+        <div className="px-5 pt-3 pb-0">
+          <WaveformSeek value={currentTime} max={duration} isPlaying={isPlaying} onChange={handleSeek} />
+          <div className="flex items-center justify-between text-[10px] tabular-nums text-muted-foreground mt-1">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+        </div>
+
+        {/* Controls row */}
+        <div className="px-5 py-3 flex items-center gap-5">
+          {/* Episode info */}
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            {coverSrc ? (
+              <img
+                src={coverSrc}
+                alt={podcast.title}
+                className="w-8 h-8 rounded-sm object-cover shrink-0 border border-border"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-sm bg-muted border border-border flex items-center justify-center shrink-0">
+                <Mic className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs truncate">{podcast.title}</p>
+              <p className="text-[10px] text-muted-foreground">AI Generated</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 items-center">
-            {/* Left: Podcast Info */}
-            <div className="flex items-center gap-3">
-              <img
-                src={podcast.imagePath ? convertFileSrc(podcast.imagePath) : podcast.imageUrl || "/placeholder.svg"}
-                alt={podcast.title}
-                className="w-16 h-16 rounded-lg object-cover shadow-md"
-              />
-              <div className="min-w-0">
-                <p className="font-semibold text-sm truncate">{podcast.title}</p>
-                <p className="text-xs text-muted-foreground truncate">AI Generated Podcast</p>
-              </div>
-            </div>
+          {/* Playback controls — centered */}
+          <div className="flex items-center gap-1 shrink-0">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSkipBack} title="Back 15s">
+              <SkipBack className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              className="h-9 w-9 rounded-full"
+              onClick={handlePlayPause}
+            >
+              {isPlaying ? (
+                <Pause className="w-4 h-4" />
+              ) : (
+                <Play className="w-4 h-4 fill-current" />
+              )}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSkipForward} title="Forward 15s">
+              <SkipForward className="w-3.5 h-3.5" />
+            </Button>
+          </div>
 
-            {/* Center: Controls */}
-            <div className="flex flex-col items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <Shuffle className="w-4 h-4" />
-                </Button>
+          {/* Right — volume + feedback + close */}
+          <div className="flex items-center gap-2 flex-1 justify-end">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={toggleMute}>
+              {isMuted || volume === 0 ? (
+                <VolumeX className="w-3.5 h-3.5" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5" />
+              )}
+            </Button>
+            <VolumeBar value={isMuted ? 0 : volume} onChange={handleVolumeChange} />
 
-                <Button variant="ghost" size="icon" onClick={handleSkipBack} className="h-9 w-9">
-                  <SkipBack className="w-5 h-5" />
-                </Button>
+            <div className="w-px h-4 bg-border mx-1" />
 
-                <Button size="icon" onClick={handlePlayPause} className="h-12 w-12 rounded-full">
-                  {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 fill-current" />}
-                </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("h-7 w-7", episodeFeedback === "positive" && "text-primary")}
+              onClick={() => handleFeedbackClick("positive")}
+            >
+              <ThumbsUp className={cn("w-3.5 h-3.5", episodeFeedback === "positive" && "fill-current")} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("h-7 w-7", episodeFeedback === "negative" && "text-destructive")}
+              onClick={() => handleFeedbackClick("negative")}
+            >
+              <ThumbsDown className={cn("w-3.5 h-3.5", episodeFeedback === "negative" && "fill-current")} />
+            </Button>
 
-                <Button variant="ghost" size="icon" onClick={handleSkipForward} className="h-9 w-9">
-                  <SkipForward className="w-5 h-5" />
-                </Button>
+            <div className="w-px h-4 bg-border mx-1" />
 
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <Repeat className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-
-            {/* Right: Volume & Feedback */}
-            <div className="flex items-center justify-end gap-4">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-8 w-8 ${episodeFeedback === "positive" ? "text-green-500" : "text-muted-foreground hover:text-foreground"}`}
-                  onClick={() => handleFeedbackClick("positive")}
-                >
-                  <ThumbsUp className={`w-4 h-4 ${episodeFeedback === "positive" ? "fill-current" : ""}`} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-8 w-8 ${episodeFeedback === "negative" ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
-                  onClick={() => handleFeedbackClick("negative")}
-                >
-                  <ThumbsDown className={`w-4 h-4 ${episodeFeedback === "negative" ? "fill-current" : ""}`} />
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-2 min-w-[140px]">
-                <Button variant="ghost" size="icon" onClick={toggleMute} className="h-8 w-8">
-                  {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                </Button>
-                <Slider
-                  value={[isMuted ? 0 : volume]}
-                  max={100}
-                  step={1}
-                  onValueChange={handleVolumeChange}
-                  className="w-20"
-                />
-              </div>
-
-              <Button variant="ghost" size="icon" onClick={() => setIsMinimized(true)} className="h-8 w-8">
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setIsMinimized(true)}
+            >
+              <X className="w-3.5 h-3.5" />
+            </Button>
           </div>
         </div>
       </div>
 
-      {/* Feedback Dialog */}
       <FeedbackDialog
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
