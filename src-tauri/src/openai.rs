@@ -2,7 +2,7 @@ use async_openai::{
     config::OpenAIConfig,
     types::{
         audio::{CreateSpeechRequestArgs, SpeechModel, SpeechResponseFormat, Voice},
-        responses::CreateResponseArgs,
+        responses::{CreateResponseArgs, ReasoningArgs, ReasoningEffort, Reasoning},
     },
     Client,
 };
@@ -38,6 +38,8 @@ pub struct GeneratePodcastScriptOutput {
     pub title: String,
     pub summary: String,
     pub hook: String,
+    pub intro: String,
+    pub conclusion: String,
     pub script: String,
     pub voice_instructions: String,
     pub estimated_duration_minutes: u32,
@@ -115,6 +117,27 @@ fn voice_style_description(voice_type: Option<&str>) -> &'static str {
     }
 }
 
+fn ideal_episode_duration_minutes(input: &GeneratePodcastScriptInput) -> u32 {
+    let theme_bonus = input.themes.len().saturating_sub(1).min(3) as u32;
+    let research_context = input.research_context.as_deref().unwrap_or_default();
+    let research_depth = if research_context.trim().is_empty() {
+        0
+    } else {
+        let line_count = research_context.lines().filter(|line| !line.trim().is_empty()).count() as u32;
+        match line_count {
+            0..=2 => 1,
+            3..=5 => 2,
+            _ => 3,
+        }
+    };
+
+    (15 + theme_bonus + research_depth).clamp(15, 24)
+}
+
+fn target_word_count(minutes: u32) -> u32 {
+    minutes.saturating_mul(140)
+}
+
 fn normalize_script_model(model: Option<&str>) -> String {
     match model.filter(|value| !value.trim().is_empty()) {
         Some("gpt-5.5") => "gpt-5.5".to_string(),
@@ -148,41 +171,39 @@ fn research_section(input: &GeneratePodcastScriptInput) -> String {
         .unwrap_or_default()
 }
 
-fn build_brief_prompt(input: &GeneratePodcastScriptInput) -> String {
+fn build_brief_prompt(input: &GeneratePodcastScriptInput, target_duration: u32, word_count: u32) -> String {
     let themes = script_themes(input);
-    let duration = input.duration_minutes.unwrap_or(4);
     let voice_style = voice_style_description(input.voice_type.as_deref());
     let research_context = research_section(input);
 
     format!(
-        "You are a senior podcast producer. Build a compact episode brief for a {duration}-minute single-host episode.\n\nAudience interests: {themes}\nDesired voice: {voice_style}.{research_context}\n\nWrite a brief with these sections:\n- angle: the specific point of view, tension, or question the episode is built around\n- audience promise: what the listener will understand by the end\n- must-use details: concrete facts, dated details, named examples, and source URLs worth using\n- avoid: generic claims, stale facts, essay phrasing, and anything unsupported by the research notes\n- sound: how the host should feel on mic\n\nKeep it under 600 words. Do not write the script yet.",
+        "You are a senior podcast producer. Build a compact episode brief for a {target_duration}-minute single-host episode.\n\nAudience interests: {themes}\nDesired voice: {voice_style}.\nTarget length: about {target_duration} minutes spoken aloud, roughly {word_count} words.{research_context}\n\nWrite a brief with these sections:\n- angle: the specific point of view, tension, or question the episode is built around\n- audience promise: what the listener will understand by the end\n- intro beat: how the episode should open and orient the listener\n- conclusion beat: how the episode should land and what the final thought is\n- must-use details: concrete facts, dated details, named examples, and source URLs worth using\n- avoid: generic claims, stale facts, essay phrasing, and anything unsupported by the research notes\n- sound: how the host should feel on mic\n\nPrefer grounded, specific details over broad commentary. Do not write the script yet.",
         themes = themes,
         voice_style = voice_style,
-        duration = duration,
+        target_duration = target_duration,
+        word_count = word_count,
         research_context = research_context
     )
 }
 
-fn build_outline_prompt(input: &GeneratePodcastScriptInput, brief: &str) -> String {
-    let duration = input.duration_minutes.unwrap_or(4);
+fn build_outline_prompt(brief: &str, target_duration: u32) -> String {
 
     format!(
-        "Turn this producer brief into a spoken podcast beat outline for a {duration}-minute single-host episode.\n\nProducer brief:\n{brief}\n\nReturn a tight outline with:\n- cold open beat\n- setup beat\n- 3 to 5 body beats, each with a concrete detail or example\n- transition notes between beats\n- closing beat that lands without sounding like a school essay\n\nDo not write full paragraphs yet. Make the structure sound like audio, not an article."
+        "Turn this producer brief into a spoken podcast beat outline for a {target_duration}-minute single-host episode.\n\nProducer brief:\n{brief}\n\nReturn a tight outline with:\n- cold open beat\n- intro beat: orient the listener and state why the topic matters now\n- 5 to 7 body beats, each with a concrete detail, example, contrast, or turn\n- transition notes between beats\n- conclusion beat: synthesize the episode and leave the listener with a clear final thought\n- outro beat: a short ending that feels human, not promotional\n\nDo not write full paragraphs yet. Make the structure sound like audio, not an article. The outline should support a real podcast episode, not a 5-minute synopsis."
     )
 }
 
-fn build_draft_prompt(input: &GeneratePodcastScriptInput, brief: &str, outline: &str) -> String {
-    let duration = input.duration_minutes.unwrap_or(4);
+fn build_draft_prompt(input: &GeneratePodcastScriptInput, brief: &str, outline: &str, target_duration: u32, word_count: u32) -> String {
     let voice_style = voice_style_description(input.voice_type.as_deref());
 
     format!(
-        "Write the first full script draft from this brief and outline.\n\nTarget length: about {duration} minutes spoken aloud.\nVoice style: {voice_style}.\n\nProducer brief:\n{brief}\n\nBeat outline:\n{outline}\n\nReturn only a JSON object with exactly these keys:\n- title: concise episode title\n- summary: one sentence episode summary\n- hook: the opening hook, written as spoken audio\n- script: the full spoken script\n- voice_instructions: short TTS direction for the narrator\n- estimated_duration_minutes: integer estimate\n\nWriting rules:\n- sound like a real host talking, not an essay being read\n- vary sentence length and rhythm\n- use contractions naturally\n- include concrete details from the brief where useful\n- do not cite URLs aloud unless it is editorially natural\n- avoid \"In today's episode\", \"we'll explore\", \"delve\", \"landscape\", \"fascinating\", and generic wrap-up language\n- keep the script under 3200 characters"
+        "Write the first full script draft from this brief and outline.\n\nTarget length: about {target_duration} minutes spoken aloud, roughly {word_count} words.\nVoice style: {voice_style}.\n\nProducer brief:\n{brief}\n\nBeat outline:\n{outline}\n\nReturn only a JSON object with exactly these keys:\n- title: concise episode title\n- summary: one sentence episode summary\n- hook: the opening hook, written as spoken audio\n- intro: the opening segment after the hook that properly sets the episode up\n- conclusion: the ending segment that lands the episode and gives it closure\n- script: the full spoken script\n- voice_instructions: short TTS direction for the narrator\n- estimated_duration_minutes: integer estimate\n\nWriting rules:\n- sound like a real host talking, not an essay being read\n- start with a hook, then a clear intro, then the body, then a real conclusion\n- vary sentence length and rhythm\n- use contractions naturally\n- include concrete details from the brief where useful\n- if the research is thin, lean into implications, examples, and the host's reasoning rather than filler\n- do not cite URLs aloud unless it is editorially natural\n- avoid \"In today's episode\", \"we'll explore\", \"delve\", \"landscape\", \"fascinating\", and generic wrap-up language\n- keep the full script long enough to reach the target duration; do not compress it into a synopsis"
     )
 }
 
-fn build_editor_prompt(draft_json: &str) -> String {
+fn build_editor_prompt(draft_json: &str, target_duration: u32, word_count: u32) -> String {
     format!(
-        "You are an audio editor cleaning up an AI-generated podcast script so it sounds human, specific, and ready for TTS.\n\nDraft JSON:\n{draft_json}\n\nReturn only a JSON object with exactly the same keys:\n- title\n- summary\n- hook\n- script\n- voice_instructions\n- estimated_duration_minutes\n\nEditing rules:\n- preserve factual claims from the draft; do not add new facts\n- remove AI cadence, generic throat-clearing, and essay transitions\n- make the first 20 seconds sharper\n- make every paragraph speakable in one breath or two\n- add light conversational rhythm, but no stage directions inside the script\n- keep the script under 3200 characters\n- keep estimated_duration_minutes as an integer"
+        "You are an audio editor cleaning up an AI-generated podcast script so it sounds human, specific, and ready for TTS.\n\nTarget length: about {target_duration} minutes spoken aloud, roughly {word_count} words.\n\nDraft JSON:\n{draft_json}\n\nReturn only a JSON object with exactly the same keys:\n- title\n- summary\n- hook\n- intro\n- conclusion\n- script\n- voice_instructions\n- estimated_duration_minutes\n\nEditing rules:\n- preserve factual claims from the draft; do not add new facts\n- remove AI cadence, generic throat-clearing, and essay transitions\n- make the first 20 seconds sharper\n- make the intro feel like a real entry into the topic, not a preamble\n- make the conclusion feel like a real landing, not a summary dump\n- expand short passages with natural connective tissue, examples, and spoken transitions when needed\n- keep the script speakable for TTS, with normal podcast pacing\n- keep estimated_duration_minutes as an integer"
     )
 }
 
@@ -223,11 +244,11 @@ fn image_prompt(input: &GenerateEpisodeGraphicInput) -> String {
     };
 
     format!(
-    "Create a polished podcast episode cover for '{title}'. The episode explores {summary}. Visual style: editorial, cinematic, modern, high contrast, rich detail, no text, no logos, no watermarks. Themes: {themes}. Compose it like a professional podcast thumbnail with a strong central subject and clear visual hierarchy.",
-    title = input.title,
-    summary = input.summary,
-    themes = themes
-  )
+        "Create a polished podcast episode cover for '{title}'. The episode explores {summary}. Visual style: consistent Podcastr house style, editorial, cinematic, modern, high contrast, rich detail, no text, no logos, no watermarks. Color palette: deep navy, warm amber, ivory, and restrained teal accents. Composition: centered subject, subtle geometric framing, clear visual hierarchy, premium broadcast magazine feel, recognizable as part of the same content house across episodes. Themes: {themes}.",
+        title = input.title,
+        summary = input.summary,
+        themes = themes
+    )
 }
 
 fn build_client(api_key: Option<String>) -> Result<Client<OpenAIConfig>, String> {
@@ -235,16 +256,25 @@ fn build_client(api_key: Option<String>) -> Result<Client<OpenAIConfig>, String>
     Ok(Client::build(http_client()?, config))
 }
 
+fn reasoning_settings(effort: ReasoningEffort) -> Result<Reasoning, String> {
+    ReasoningArgs::default()
+        .effort(effort)
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 async fn create_response_text(
     client: &Client<OpenAIConfig>,
     model: &str,
     prompt: String,
     max_output_tokens: u32,
+    reasoning_effort: ReasoningEffort,
 ) -> Result<String, String> {
     let request = CreateResponseArgs::default()
         .model(model)
         .input(prompt)
         .max_output_tokens(max_output_tokens)
+        .reasoning(reasoning_settings(reasoning_effort)?)
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -305,6 +335,14 @@ fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String
         .get("hook")
         .and_then(Value::as_str)
         .ok_or_else(|| "Missing hook in OpenAI script response".to_string())?;
+    let intro = parsed
+        .get("intro")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Missing intro in OpenAI script response".to_string())?;
+    let conclusion = parsed
+        .get("conclusion")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Missing conclusion in OpenAI script response".to_string())?;
     let script = parsed
         .get("script")
         .and_then(Value::as_str)
@@ -324,6 +362,8 @@ fn extract_json_object(text: &str) -> Result<GeneratePodcastScriptOutput, String
         title: title.to_string(),
         summary: summary.to_string(),
         hook: hook.to_string(),
+        intro: intro.to_string(),
+        conclusion: conclusion.to_string(),
         script: script.to_string(),
         voice_instructions: voice_instructions.to_string(),
         estimated_duration_minutes: estimated_duration_minutes as u32,
@@ -337,40 +377,50 @@ pub async fn generate_podcast_script(
     let api_key = input.api_key.clone();
     let client = build_client(api_key)?;
     let script_model = normalize_script_model(input.script_model.as_deref());
+    let target_duration = input
+        .duration_minutes
+        .unwrap_or_else(|| ideal_episode_duration_minutes(&input));
+    let word_count = target_word_count(target_duration);
 
     let brief = create_response_text(
         &client,
         &script_model,
-        build_brief_prompt(&input),
-        1200u32,
+        build_brief_prompt(&input, target_duration, word_count),
+        1600u32,
+        ReasoningEffort::Medium,
     )
     .await?;
 
     let outline = create_response_text(
         &client,
         &script_model,
-        build_outline_prompt(&input, &brief),
-        1200u32,
+        build_outline_prompt(&brief, target_duration),
+        1800u32,
+        ReasoningEffort::Medium,
     )
     .await?;
 
     let draft_json = create_response_text(
         &client,
         &script_model,
-        build_draft_prompt(&input, &brief, &outline),
-        2200u32,
+        build_draft_prompt(&input, &brief, &outline, target_duration, word_count),
+        6000u32,
+        ReasoningEffort::High,
     )
     .await?;
 
     let edited_json = create_response_text(
         &client,
         &script_model,
-        build_editor_prompt(&draft_json),
-        2200u32,
+        build_editor_prompt(&draft_json, target_duration, word_count),
+        6000u32,
+        ReasoningEffort::High,
     )
     .await?;
 
-    extract_json_object(&edited_json)
+    let mut output = extract_json_object(&edited_json)?;
+    output.estimated_duration_minutes = output.estimated_duration_minutes.max(target_duration);
+    Ok(output)
 }
 
 #[tauri::command]
