@@ -6,6 +6,7 @@ export type PodcastScriptInput = {
   apiKey?: string
   themes: string[]
   voiceType?: string
+  scriptModel?: string
   durationMinutes?: number
   researchContext?: string
 }

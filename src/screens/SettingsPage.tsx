@@ -13,6 +13,7 @@ import { Sparkles, ChevronLeft, Trash2 } from "lucide-react"
 import { Link, useNavigate } from "@/lib/router"
 import { useToast } from "@/hooks/use-toast"
 import {
+  applyAppTheme,
   clearAllAppData,
   getAppSettings,
   getOnboardingState,
@@ -30,6 +31,7 @@ export function SettingsPage() {
     downloadQuality: "high",
     voiceType: "natural",
     defaultVoice: "alloy",
+    scriptModel: "gpt-5.5",
     playbackSpeed: 1.0,
     autoDownload: false,
     notifications: true,
@@ -63,6 +65,9 @@ export function SettingsPage() {
   const updateSetting = (key: string, value: any) => {
     const newSettings = { ...settings, [key]: value }
     setSettings(newSettings)
+    if (key === "darkMode") {
+      applyAppTheme(Boolean(value))
+    }
     void saveAppSettings(newSettings)
   }
 
@@ -132,6 +137,7 @@ export function SettingsPage() {
   const handleClearAllData = async () => {
     if (confirm("Are you sure you want to clear all data? This action cannot be undone.")) {
       await clearAllAppData()
+      applyAppTheme(true)
       toast({
         title: "All data cleared",
         description: "Redirecting to onboarding...",
@@ -266,6 +272,22 @@ export function SettingsPage() {
                   <SelectItem value="professional">Professional & Clear</SelectItem>
                   <SelectItem value="energetic">Energetic & Dynamic</SelectItem>
                   <SelectItem value="calm">Calm & Soothing</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="script-model">Script Model</Label>
+              <Select value={settings.scriptModel} onValueChange={(value) => updateSetting("scriptModel", value)}>
+                <SelectTrigger id="script-model">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="gpt-5.5">GPT-5.5 - best writing quality</SelectItem>
+                  <SelectItem value="gpt-5.4">GPT-5.4 - balanced quality</SelectItem>
+                  <SelectItem value="gpt-5">GPT-5 - legacy high quality</SelectItem>
+                  <SelectItem value="gpt-5-mini">GPT-5 mini - faster</SelectItem>
+                  <SelectItem value="gpt-5-nano">GPT-5 nano - cheapest</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -3,6 +3,7 @@ type AppSettings = {
   downloadQuality: string
   voiceType: string
   defaultVoice: string
+  scriptModel: string
   playbackSpeed: number
   autoDownload: boolean
   notifications: boolean
@@ -51,6 +52,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   downloadQuality: "high",
   voiceType: "natural",
   defaultVoice: "alloy",
+  scriptModel: "gpt-5.5",
   playbackSpeed: 1,
   autoDownload: false,
   notifications: true,
@@ -60,6 +62,14 @@ const DEFAULT_SETTINGS: AppSettings = {
 }
 
 let dbPromise: Promise<SqliteDatabase | null> | null = null
+
+export function applyAppTheme(darkMode: boolean) {
+  if (typeof document === "undefined") {
+    return
+  }
+
+  document.documentElement.classList.toggle("dark", darkMode)
+}
 
 function isDesktopRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
@@ -151,6 +161,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 }
 
 export async function saveAppSettings(settings: AppSettings) {
+  applyAppTheme(settings.darkMode)
   await writeStateValue(APP_SETTINGS_KEY, JSON.stringify(settings))
 }
 
