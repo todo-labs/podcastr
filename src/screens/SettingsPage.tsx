@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
@@ -14,9 +15,12 @@ import { useToast } from "@/hooks/use-toast"
 import {
   clearAllAppData,
   getAppSettings,
+  getOnboardingState,
   resetOnboardingState,
   saveAppSettings,
+  saveOnboardingState,
 } from "@/lib/persistence"
+import { ThemePicker } from "@/components/theme-picker"
 
 export function SettingsPage() {
   const navigate = useNavigate()
@@ -25,19 +29,29 @@ export function SettingsPage() {
     autoPlay: true,
     downloadQuality: "high",
     voiceType: "natural",
+    defaultVoice: "alloy",
     playbackSpeed: 1.0,
     autoDownload: false,
     notifications: true,
     darkMode: true,
+    openaiApiKey: "",
+    exaApiKey: "",
   })
+  const [selectedThemes, setSelectedThemes] = useState<string[]>([])
+  const [apiKeyDraft, setApiKeyDraft] = useState("")
+  const [exaApiKeyDraft, setExaApiKeyDraft] = useState("")
 
   useEffect(() => {
     let cancelled = false
 
     ;(async () => {
-      const savedSettings = await getAppSettings()
+      const [savedSettings, onboardingState] = await Promise.all([
+        getAppSettings(),
+        getOnboardingState(),
+      ])
       if (!cancelled) {
         setSettings(savedSettings)
+        setSelectedThemes(onboardingState.selectedThemes)
       }
     })()
 
@@ -50,6 +64,58 @@ export function SettingsPage() {
     const newSettings = { ...settings, [key]: value }
     setSettings(newSettings)
     void saveAppSettings(newSettings)
+  }
+
+  const saveApiKey = () => {
+    const nextSettings = {
+      ...settings,
+      openaiApiKey: apiKeyDraft.trim() || settings.openaiApiKey,
+    }
+
+    setSettings(nextSettings)
+    setApiKeyDraft("")
+    void saveAppSettings(nextSettings)
+  }
+
+  const clearApiKey = () => {
+    const nextSettings = {
+      ...settings,
+      openaiApiKey: "",
+    }
+
+    setSettings(nextSettings)
+    setApiKeyDraft("")
+    void saveAppSettings(nextSettings)
+  }
+
+  const saveExaApiKey = () => {
+    const nextSettings = {
+      ...settings,
+      exaApiKey: exaApiKeyDraft.trim() || settings.exaApiKey,
+    }
+
+    setSettings(nextSettings)
+    setExaApiKeyDraft("")
+    void saveAppSettings(nextSettings)
+  }
+
+  const clearExaApiKey = () => {
+    const nextSettings = {
+      ...settings,
+      exaApiKey: "",
+    }
+
+    setSettings(nextSettings)
+    setExaApiKeyDraft("")
+    void saveAppSettings(nextSettings)
+  }
+
+  const updateThemes = (themes: string[]) => {
+    setSelectedThemes(themes)
+    void saveOnboardingState({
+      completed: true,
+      selectedThemes: themes,
+    })
   }
 
   const handleResetOnboarding = async () => {
@@ -142,6 +208,54 @@ export function SettingsPage() {
 
           <div className="space-y-6">
             <div className="space-y-2">
+              <Label htmlFor="openai-api-key">OpenAI API Key</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="openai-api-key"
+                  type="password"
+                  placeholder={settings.openaiApiKey ? "Key already configured" : "sk-..."}
+                  value={apiKeyDraft}
+                  onChange={(event) => setApiKeyDraft(event.target.value)}
+                  autoComplete="off"
+                />
+                <Button onClick={saveApiKey} disabled={!apiKeyDraft.trim()}>
+                  Save
+                </Button>
+                <Button variant="outline" onClick={clearApiKey} disabled={!settings.openaiApiKey && !apiKeyDraft}>
+                  Clear
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {settings.openaiApiKey ? "A key is configured locally for OpenAI requests." : "No API key is saved yet."}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="exa-api-key">Exa API Key</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="exa-api-key"
+                  type="password"
+                  placeholder={settings.exaApiKey ? "Key already configured" : "exa_..."}
+                  value={exaApiKeyDraft}
+                  onChange={(event) => setExaApiKeyDraft(event.target.value)}
+                  autoComplete="off"
+                />
+                <Button onClick={saveExaApiKey} disabled={!exaApiKeyDraft.trim()}>
+                  Save
+                </Button>
+                <Button variant="outline" onClick={clearExaApiKey} disabled={!settings.exaApiKey && !exaApiKeyDraft}>
+                  Clear
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {settings.exaApiKey
+                  ? "A key is configured locally for web-grounded podcast research."
+                  : "No Exa key is saved yet. Episodes will generate without web research."}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="voice-type">Voice Type</Label>
               <Select value={settings.voiceType} onValueChange={(value) => updateSetting("voiceType", value)}>
                 <SelectTrigger id="voice-type">
@@ -152,6 +266,30 @@ export function SettingsPage() {
                   <SelectItem value="professional">Professional & Clear</SelectItem>
                   <SelectItem value="energetic">Energetic & Dynamic</SelectItem>
                   <SelectItem value="calm">Calm & Soothing</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="default-voice">Default Voice</Label>
+              <Select value={settings.defaultVoice} onValueChange={(value) => updateSetting("defaultVoice", value)}>
+                <SelectTrigger id="default-voice">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alloy">Alloy</SelectItem>
+                  <SelectItem value="ash">Ash</SelectItem>
+                  <SelectItem value="ballad">Ballad</SelectItem>
+                  <SelectItem value="coral">Coral</SelectItem>
+                  <SelectItem value="echo">Echo</SelectItem>
+                  <SelectItem value="fable">Fable</SelectItem>
+                  <SelectItem value="onyx">Onyx</SelectItem>
+                  <SelectItem value="nova">Nova</SelectItem>
+                  <SelectItem value="sage">Sage</SelectItem>
+                  <SelectItem value="shimmer">Shimmer</SelectItem>
+                  <SelectItem value="verse">Verse</SelectItem>
+                  <SelectItem value="marin">Marin</SelectItem>
+                  <SelectItem value="cedar">Cedar</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -184,6 +322,17 @@ export function SettingsPage() {
               />
             </div>
           </div>
+        </Card>
+
+        <Card className="p-6 space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold mb-1">Themes</h2>
+            <p className="text-sm text-muted-foreground">Update the themes used to personalize your feed</p>
+          </div>
+
+          <Separator />
+
+          <ThemePicker selectedThemes={selectedThemes} onChange={updateThemes} />
         </Card>
 
         <Card className="p-6 space-y-6">

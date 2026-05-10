@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { FeedbackDialog } from "./feedback-dialog"
 import { getPodcastFeedback } from "@/lib/persistence"
+import { convertFileSrc } from "@tauri-apps/api/core"
 
 interface Podcast {
   id: string
@@ -25,6 +26,9 @@ interface Podcast {
   description: string
   duration: string
   imageUrl?: string
+  imagePath?: string
+  audioPath?: string
+  audioUrl?: string
 }
 
 interface AudioPlayerProps {
@@ -41,7 +45,10 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackType, setFeedbackType] = useState<"positive" | "negative" | null>(null)
   const [episodeFeedback, setEpisodeFeedback] = useState<"positive" | "negative" | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const audioSource = podcast.audioPath ? convertFileSrc(podcast.audioPath) : podcast.audioUrl
+  const hasAudioSource = Boolean(audioSource)
 
   useEffect(() => {
     let cancelled = false
@@ -65,6 +72,84 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
   }, [podcast.id])
 
   useEffect(() => {
+    setCurrentTime(0)
+    setIsPlaying(false)
+
+    if (!hasAudioSource) {
+      setDuration(180)
+    }
+  }, [podcast.id, hasAudioSource])
+
+  useEffect(() => {
+    if (!hasAudioSource) {
+      return
+    }
+
+    const audio = new Audio(audioSource)
+    audioRef.current = audio
+    audio.preload = "metadata"
+    audio.volume = volume / 100
+    audio.muted = isMuted
+
+    const handleLoadedMetadata = () => {
+      setDuration(Number.isFinite(audio.duration) && audio.duration > 0 ? Math.max(1, Math.round(audio.duration)) : 180)
+    }
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(Math.floor(audio.currentTime))
+    }
+
+    const handleEnded = () => {
+      setIsPlaying(false)
+      setCurrentTime(0)
+    }
+
+    const handleVolumeChange = () => {
+      setVolume(Math.round(audio.volume * 100))
+      setIsMuted(audio.muted || audio.volume === 0)
+    }
+
+    const handlePlay = () => {
+      setIsPlaying(true)
+    }
+
+    const handlePause = () => {
+      setIsPlaying(false)
+    }
+
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata)
+    audio.addEventListener("timeupdate", handleTimeUpdate)
+    audio.addEventListener("ended", handleEnded)
+    audio.addEventListener("volumechange", handleVolumeChange)
+    audio.addEventListener("play", handlePlay)
+    audio.addEventListener("pause", handlePause)
+
+    return () => {
+      audio.pause()
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata)
+      audio.removeEventListener("timeupdate", handleTimeUpdate)
+      audio.removeEventListener("ended", handleEnded)
+      audio.removeEventListener("volumechange", handleVolumeChange)
+      audio.removeEventListener("play", handlePlay)
+      audio.removeEventListener("pause", handlePause)
+      if (audioRef.current === audio) {
+        audioRef.current = null
+      }
+    }
+  }, [audioSource, hasAudioSource])
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume / 100
+      audioRef.current.muted = isMuted
+    }
+  }, [volume, isMuted])
+
+  useEffect(() => {
+    if (hasAudioSource) {
+      return
+    }
+
     if (isPlaying) {
       intervalRef.current = setInterval(() => {
         setCurrentTime((prev) => {
@@ -86,7 +171,7 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
         clearInterval(intervalRef.current)
       }
     }
-  }, [isPlaying, duration])
+  }, [hasAudioSource, isPlaying, duration])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -94,28 +179,67 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
     return `${mins}:${secs.toString().padStart(2, "0")}`
   }
 
-  const handlePlayPause = () => {
+  const handlePlayPause = async () => {
+    if (audioRef.current) {
+      if (audioRef.current.paused) {
+        try {
+          await audioRef.current.play()
+        } catch {
+          setIsPlaying(false)
+        }
+      } else {
+        audioRef.current.pause()
+      }
+
+      return
+    }
+
     setIsPlaying(!isPlaying)
   }
 
   const handleSeek = (value: number[]) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = value[0]
+      setCurrentTime(value[0])
+      return
+    }
+
     setCurrentTime(value[0])
   }
 
   const handleVolumeChange = (value: number[]) => {
     setVolume(value[0])
     setIsMuted(false)
+
+    if (audioRef.current) {
+      audioRef.current.volume = value[0] / 100
+      audioRef.current.muted = false
+    }
   }
 
   const toggleMute = () => {
     setIsMuted(!isMuted)
+
+    if (audioRef.current) {
+      audioRef.current.muted = !isMuted
+    }
   }
 
   const handleSkipForward = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = Math.min(audioRef.current.currentTime + 15, duration)
+      return
+    }
+
     setCurrentTime(Math.min(currentTime + 15, duration))
   }
 
   const handleSkipBack = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = Math.max(audioRef.current.currentTime - 15, 0)
+      return
+    }
+
     setCurrentTime(Math.max(currentTime - 15, 0))
   }
 
@@ -131,7 +255,7 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <img
-                src={podcast.imageUrl || "/placeholder.svg"}
+                src={podcast.imagePath ? convertFileSrc(podcast.imagePath) : podcast.imageUrl || "/placeholder.svg"}
                 alt={podcast.title}
                 className="w-12 h-12 rounded object-cover"
               />
@@ -180,7 +304,7 @@ export function AudioPlayer({ podcast }: AudioPlayerProps) {
             {/* Left: Podcast Info */}
             <div className="flex items-center gap-3">
               <img
-                src={podcast.imageUrl || "/placeholder.svg"}
+                src={podcast.imagePath ? convertFileSrc(podcast.imagePath) : podcast.imageUrl || "/placeholder.svg"}
                 alt={podcast.title}
                 className="w-16 h-16 rounded-lg object-cover shadow-md"
               />

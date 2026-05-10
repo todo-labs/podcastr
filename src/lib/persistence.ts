@@ -2,10 +2,13 @@ type AppSettings = {
   autoPlay: boolean
   downloadQuality: string
   voiceType: string
+  defaultVoice: string
   playbackSpeed: number
   autoDownload: boolean
   notifications: boolean
   darkMode: boolean
+  openaiApiKey: string
+  exaApiKey: string
 }
 
 type OnboardingState = {
@@ -23,6 +26,16 @@ type FeedbackEntry = {
   timestamp: string
 }
 
+type GeneratedPodcast = {
+  id: string
+  title: string
+  description: string
+  duration: string
+  generatedAt: string
+  audioPath: string
+  imagePath: string
+}
+
 type SqliteDatabase = {
   execute(sql: string, bindValues?: unknown[]): Promise<unknown>
   select<T = unknown>(sql: string, bindValues?: unknown[]): Promise<T>
@@ -31,15 +44,19 @@ type SqliteDatabase = {
 const DB_URL = "sqlite:podcastr.db"
 const APP_SETTINGS_KEY = "app_settings"
 const ONBOARDING_KEY = "onboarding_state"
+const GENERATED_PODCASTS_KEY = "generated_podcasts"
 
 const DEFAULT_SETTINGS: AppSettings = {
   autoPlay: true,
   downloadQuality: "high",
   voiceType: "natural",
+  defaultVoice: "alloy",
   playbackSpeed: 1,
   autoDownload: false,
   notifications: true,
   darkMode: true,
+  openaiApiKey: "",
+  exaApiKey: "",
 }
 
 let dbPromise: Promise<SqliteDatabase | null> | null = null
@@ -71,6 +88,18 @@ async function loadDatabase() {
             rating TEXT NOT NULL,
             feedback TEXT NOT NULL,
             timestamp TEXT NOT NULL
+          )
+        `)
+
+        await db.execute(`
+          CREATE TABLE IF NOT EXISTS generated_podcasts (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            duration TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            audio_path TEXT NOT NULL,
+            image_path TEXT NOT NULL
           )
         `)
 
@@ -175,6 +204,7 @@ export async function clearAllAppData() {
 
   await db.execute("DELETE FROM app_state")
   await db.execute("DELETE FROM podcast_feedback")
+  await db.execute("DELETE FROM generated_podcasts")
 }
 
 export async function getPodcastFeedback(podcastId: string) {
@@ -211,5 +241,50 @@ export async function savePodcastFeedback(entry: FeedbackEntry) {
        feedback = excluded.feedback,
        timestamp = excluded.timestamp`,
     [entry.podcastId, entry.podcastTitle, entry.rating, entry.feedback, entry.timestamp],
+  )
+}
+
+export async function getGeneratedPodcasts(): Promise<GeneratedPodcast[]> {
+  const db = await loadDatabase()
+  if (!db) {
+    const raw = localStorage.getItem(GENERATED_PODCASTS_KEY)
+    return raw ? (JSON.parse(raw) as GeneratedPodcast[]) : []
+  }
+
+  return db.select<Array<GeneratedPodcast>>(
+    `SELECT
+      id,
+      title,
+      description,
+      duration,
+      generated_at as generatedAt,
+      audio_path as audioPath,
+      image_path as imagePath
+     FROM generated_podcasts
+     ORDER BY generated_at DESC`,
+  )
+}
+
+export async function saveGeneratedPodcast(entry: GeneratedPodcast) {
+  const db = await loadDatabase()
+  if (!db) {
+    const existing = JSON.parse(localStorage.getItem(GENERATED_PODCASTS_KEY) || "[]") as GeneratedPodcast[]
+    const filtered = existing.filter((podcast) => podcast.id !== entry.id)
+    filtered.unshift(entry)
+    localStorage.setItem(GENERATED_PODCASTS_KEY, JSON.stringify(filtered))
+    return
+  }
+
+  await db.execute(
+    `INSERT INTO generated_podcasts (id, title, description, duration, generated_at, audio_path, image_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       description = excluded.description,
+       duration = excluded.duration,
+       generated_at = excluded.generated_at,
+       audio_path = excluded.audio_path,
+       image_path = excluded.image_path`,
+    [entry.id, entry.title, entry.description, entry.duration, entry.generatedAt, entry.audioPath, entry.imagePath],
   )
 }

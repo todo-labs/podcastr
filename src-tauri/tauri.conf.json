@@ -20,7 +20,19 @@
       }
     ],
     "security": {
-      "capabilities": ["main-capability"]
+      "capabilities": ["main-capability"],
+      "csp": {
+        "default-src": "'self' ipc: http://ipc.localhost asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "media-src": "'self' asset: http://asset.localhost blob: data:",
+        "style-src": "'unsafe-inline' 'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPLOCALDATA/generated-audio/**", "$APPLOCALDATA/generated-images/**"]
+      }
     }
   },
   "plugins": {

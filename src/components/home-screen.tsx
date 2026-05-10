@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,6 +9,17 @@ import { FeedbackDialog } from "@/components/feedback-dialog"
 import { Sparkles, Search, Settings, Play, Clock, TrendingUp, BookmarkPlus, MoreVertical } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Link } from "@/lib/router"
+import { useToast } from "@/hooks/use-toast"
+import { getAppSettings, getGeneratedPodcasts, getOnboardingState, saveGeneratedPodcast } from "@/lib/persistence"
+import {
+  generateEpisodeGraphic,
+  generatePodcastScript,
+  generatePodcastVoice,
+  mapVoiceTypeToOpenAIVoice,
+  resolveThemeLabels,
+  toImageUrl,
+} from "@/lib/openai"
+import { formatResearchContext, searchEpisodeResearch } from "@/lib/exa"
 
 interface Podcast {
   id: string
@@ -16,7 +27,8 @@ interface Podcast {
   description: string
   duration: string
   generatedAt: string
-  audioUrl?: string
+  audioPath?: string
+  imagePath?: string
 }
 
 const MOCK_PODCASTS: Podcast[] = [
@@ -69,12 +81,116 @@ export function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showFeedback, setShowFeedback] = useState(false)
   const [feedbackPodcast, setFeedbackPodcast] = useState<Podcast>(MOCK_PODCASTS[0])
+  const [podcasts, setPodcasts] = useState<Podcast[]>(MOCK_PODCASTS)
+  const [selectedThemes, setSelectedThemes] = useState<string[]>([])
+  const [voiceType, setVoiceType] = useState("natural")
+  const [defaultVoice, setDefaultVoice] = useState("alloy")
+  const [isGenerating, setIsGenerating] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    let cancelled = false
+
+    ;(async () => {
+      const [onboardingState, appSettings, generatedPodcasts] = await Promise.all([
+        getOnboardingState(),
+        getAppSettings(),
+        getGeneratedPodcasts(),
+      ])
+      if (cancelled) return
+
+      setSelectedThemes(onboardingState.selectedThemes)
+      setVoiceType(appSettings.voiceType)
+      setDefaultVoice(appSettings.defaultVoice)
+      setPodcasts([
+        ...generatedPodcasts.map((podcast) => ({
+          ...podcast,
+          generatedAt: new Date(podcast.generatedAt).toLocaleString(),
+        })),
+        ...MOCK_PODCASTS,
+      ])
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handlePlayPodcast = (podcast: Podcast) => {
     setCurrentPodcast(podcast)
   }
 
-  const filteredPodcasts = MOCK_PODCASTS.filter((podcast) =>
+  const handleGeneratePodcast = async () => {
+    if (isGenerating) {
+      return
+    }
+
+    setIsGenerating(true)
+
+    try {
+      const themes = selectedThemes.length > 0 ? selectedThemes : ["technology", "science", "business"]
+      const resolvedThemes = resolveThemeLabels(themes)
+      const researchQuery = `recent news, developments, examples, and analysis about ${resolvedThemes.join(", ")}`
+      const research = await searchEpisodeResearch(researchQuery)
+      const researchContext = formatResearchContext(research)
+      const script = await generatePodcastScript({
+        themes: resolvedThemes,
+        voiceType,
+        durationMinutes: 4,
+        researchContext,
+      })
+
+      const [audio, graphic] = await Promise.all([
+        generatePodcastVoice({
+          text: script.script,
+          voice: defaultVoice || mapVoiceTypeToOpenAIVoice(voiceType),
+          instructions: script.voiceInstructions,
+        }),
+        generateEpisodeGraphic({
+          title: script.title,
+          summary: script.summary,
+          themes: resolvedThemes,
+        }),
+      ])
+
+      const episode: Podcast = {
+        id: String(Date.now()),
+        title: script.title,
+        description: script.summary,
+        duration: `${script.estimatedDurationMinutes}:00`,
+        generatedAt: new Date().toLocaleString(),
+        audioPath: audio.audioPath,
+        imagePath: graphic.imagePath,
+      }
+
+      await saveGeneratedPodcast({
+        id: episode.id,
+        title: episode.title,
+        description: episode.description,
+        duration: episode.duration,
+        generatedAt: new Date().toISOString(),
+        audioPath: audio.audioPath,
+        imagePath: graphic.imagePath,
+      })
+
+      setPodcasts((current) => [episode, ...current])
+      setCurrentPodcast(episode)
+      toast({
+        title: "Podcast generated",
+        description: "OpenAI created the script and voice track.",
+      })
+    } catch (error) {
+      toast({
+        title: "Generation failed",
+        description: error instanceof Error ? error.message : "OpenAI generation could not complete",
+        variant: "destructive",
+      })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const filteredPodcasts = podcasts.filter((podcast) =>
     podcast.title.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
@@ -117,9 +233,9 @@ export function HomeScreen() {
       <main className="flex-1 container mx-auto px-4 py-8 space-y-8">
         {/* Quick Actions */}
         <div className="flex items-center gap-3">
-          <Button className="gap-2">
+          <Button className="gap-2" onClick={handleGeneratePodcast} disabled={isGenerating}>
             <Sparkles className="w-4 h-4" />
-            Generate New Podcast
+            {isGenerating ? "Generating..." : "Generate New Podcast"}
           </Button>
           <Button
             variant="outline"
@@ -157,8 +273,14 @@ export function HomeScreen() {
                 <div className="p-6 space-y-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-12 h-12 rounded bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-                        <Play className="w-5 h-5 text-primary" />
+                      <div className="w-12 h-12 rounded bg-primary/10 border border-primary/20 overflow-hidden shrink-0">
+                        {podcast.imagePath ? (
+                          <img src={toImageUrl(podcast.imagePath)} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center">
+                            <Play className="w-5 h-5 text-primary" />
+                          </div>
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="text-xs text-muted-foreground mb-1 font-medium uppercase tracking-wider">
